@@ -17,7 +17,7 @@ export const DEFAULT_CONFIG: WorldConfig = {
   noiseLacunarity: 2.2,
   noisePersistence: 0.45,
   waterHeight: -1.0,
-  waveHeight: 1.2,
+  waveHeight: 1.7,
   waveSpeed: 0.7,
   maxTerrainHeight: 35,
   oceanDepth: -15,
