@@ -1,12 +1,12 @@
 {
-  "name": "web-playground",
-  "module": "index.ts",
-  "type": "module",
+  "name": "island-engine",
+  "version": "0.1.0",
   "private": true,
+  "scripts": {
+    "dev": "bun --hot run server/index.ts",
+    "start": "bun run server/index.ts"
+  },
   "devDependencies": {
     "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
   }
 }

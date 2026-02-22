@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Island Engine</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #0a0f1a;
+      overflow: hidden;
+      font-family: 'Courier New', monospace;
+      color: #e0f0ff;
+      user-select: none;
+    }
+
+    #canvas-container { position: fixed; inset: 0; }
+    canvas { display: block; width: 100% !important; height: 100% !important; }
+
+    /* ─── Loading ──────────────────────────────────────────────────────── */
+    #loading {
+      position: fixed; inset: 0;
+      background: #0a0f1a;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      z-index: 100; gap: 24px;
+      transition: opacity 0.6s ease;
+    }
+    #loading.hidden { opacity: 0; pointer-events: none; }
+
+    .logo {
+      font-size: 3rem; font-weight: 900;
+      letter-spacing: 0.3em; text-transform: uppercase;
+      color: transparent;
+      background: linear-gradient(135deg, #4fc3f7, #80deea, #4db6ac);
+      -webkit-background-clip: text; background-clip: text;
+    }
+    .logo-sub {
+      font-size: 0.75rem; letter-spacing: 0.5em;
+      color: #4fc3f7; opacity: 0.6; text-transform: uppercase;
+    }
+    .wave-bar { display: flex; gap: 5px; align-items: flex-end; height: 32px; }
+    .wave-bar span {
+      width: 4px; background: #4fc3f7; border-radius: 2px;
+      animation: wave 1.2s ease-in-out infinite;
+    }
+    .wave-bar span:nth-child(1) { animation-delay: 0s; }
+    .wave-bar span:nth-child(2) { animation-delay: 0.1s; }
+    .wave-bar span:nth-child(3) { animation-delay: 0.2s; }
+    .wave-bar span:nth-child(4) { animation-delay: 0.3s; }
+    .wave-bar span:nth-child(5) { animation-delay: 0.4s; }
+    .wave-bar span:nth-child(6) { animation-delay: 0.3s; }
+    .wave-bar span:nth-child(7) { animation-delay: 0.2s; }
+    @keyframes wave {
+      0%, 100% { height: 6px; opacity: 0.3; }
+      50% { height: 28px; opacity: 1; }
+    }
+
+    /* ─── Join Screen ──────────────────────────────────────────────────── */
+    #join-screen {
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      z-index: 90; gap: 16px;
+      background: rgba(10, 15, 26, 0.88);
+      backdrop-filter: blur(14px);
+    }
+    #join-screen.hidden { display: none; }
+
+    .join-title {
+      font-size: 2.5rem; font-weight: 900;
+      letter-spacing: 0.25em;
+      color: transparent;
+      background: linear-gradient(135deg, #4fc3f7, #80deea);
+      -webkit-background-clip: text; background-clip: text;
+    }
+    .join-subtitle {
+      font-size: 0.7rem; letter-spacing: 0.4em;
+      color: #4fc3f7; opacity: 0.5; text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+
+    #name-input {
+      background: rgba(79, 195, 247, 0.08);
+      border: 1px solid rgba(79, 195, 247, 0.3);
+      border-radius: 4px; padding: 12px 20px;
+      font-family: 'Courier New', monospace;
+      font-size: 1.1rem; color: #e0f0ff;
+      text-align: center; width: 280px;
+      outline: none; letter-spacing: 0.1em;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    #name-input:focus {
+      border-color: #4fc3f7;
+      background: rgba(79, 195, 247, 0.14);
+    }
+
+    #join-btn {
+      background: linear-gradient(135deg, #0277bd, #006064);
+      border: 1px solid #4fc3f7; border-radius: 4px;
+      padding: 12px 40px;
+      font-family: 'Courier New', monospace;
+      font-size: 0.85rem; letter-spacing: 0.3em;
+      color: #e0f0ff; cursor: pointer; text-transform: uppercase;
+      transition: all 0.2s;
+    }
+    #join-btn:hover {
+      background: linear-gradient(135deg, #0288d1, #00838f);
+      box-shadow: 0 0 20px rgba(79, 195, 247, 0.3);
+    }
+
+    /* ─── HUD ──────────────────────────────────────────────────────────── */
+    #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+    #hud.hidden { display: none; }
+
+    .hud-corner {
+      position: absolute;
+      font-size: 0.7rem; letter-spacing: 0.08em;
+      opacity: 0.8; line-height: 1.7;
+    }
+    #hud-top-left  { top: 20px; left: 20px; }
+    #hud-top-right { top: 20px; right: 20px; text-align: right; }
+
+    .hud-label {
+      color: #4fc3f7; opacity: 0.5;
+      font-size: 0.6rem; letter-spacing: 0.2em; text-transform: uppercase;
+    }
+    .hud-value { color: #e0f0ff; }
+
+    .player-dot {
+      display: inline-block; width: 7px; height: 7px;
+      border-radius: 50%; margin-right: 6px; vertical-align: middle;
+    }
+
+    #controls-hint {
+      position: absolute; bottom: 20px; left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.6rem; letter-spacing: 0.18em;
+      color: #4fc3f7; opacity: 0.35; text-align: center;
+      white-space: nowrap;
+    }
+
+    #ping-display { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.65rem; }
+    .ping-good { color: #66bb6a; }
+    .ping-mid  { color: #ffa726; }
+    .ping-bad  { color: #ef5350; }
+
+    /* ─── Notifications ────────────────────────────────────────────────── */
+    #notifications {
+      position: fixed; bottom: 60px; left: 50%;
+      transform: translateX(-50%);
+      z-index: 20; display: flex; flex-direction: column-reverse;
+      align-items: center; gap: 6px; pointer-events: none;
+    }
+    .notif {
+      background: rgba(10, 15, 26, 0.85);
+      border: 1px solid rgba(79, 195, 247, 0.25);
+      border-radius: 4px; padding: 7px 18px;
+      font-size: 0.68rem; letter-spacing: 0.12em; color: #80deea;
+      animation: notif-in 0.25s ease, notif-out 0.35s ease 2.65s forwards;
+    }
+    @keyframes notif-in  { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    @keyframes notif-out { from { opacity: 1; } to { opacity: 0; } }
+
+    /* ─── Crosshair ────────────────────────────────────────────────────── */
+    #crosshair {
+      position: fixed; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 18px; height: 18px;
+      pointer-events: none; z-index: 10; display: none;
+    }
+    #crosshair::before, #crosshair::after {
+      content: ''; position: absolute; background: rgba(255,255,255,0.7); border-radius: 1px;
+    }
+    #crosshair::before { width: 2px; height: 100%; left: 50%; transform: translateX(-50%); }
+    #crosshair::after  { height: 2px; width: 100%; top: 50%; transform: translateY(-50%); }
+    #crosshair.active { display: block; }
+
+    /* ─── ESC Menu ─────────────────────────────────────────────────────── */
+    #esc-menu {
+      position: fixed; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      z-index: 80;
+      background: rgba(6, 10, 18, 0.78);
+      backdrop-filter: blur(18px) saturate(0.7);
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.18s ease;
+    }
+    #esc-menu.open { opacity: 1; pointer-events: all; }
+
+    .esc-panel {
+      width: 520px;
+      background: rgba(10, 18, 32, 0.95);
+      border: 1px solid rgba(79, 195, 247, 0.18);
+      border-radius: 6px;
+      box-shadow: 0 0 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(79,195,247,0.06) inset;
+      overflow: hidden;
+    }
+
+    .esc-header {
+      padding: 22px 28px 18px;
+      border-bottom: 1px solid rgba(79, 195, 247, 0.1);
+      display: flex; align-items: baseline; gap: 14px;
+    }
+    .esc-header h1 {
+      font-size: 1.1rem; font-weight: 900;
+      letter-spacing: 0.4em; text-transform: uppercase;
+      color: transparent;
+      background: linear-gradient(135deg, #4fc3f7, #80deea);
+      -webkit-background-clip: text; background-clip: text;
+    }
+    .esc-header span {
+      font-size: 0.6rem; letter-spacing: 0.2em;
+      color: #4fc3f7; opacity: 0.4; text-transform: uppercase;
+    }
+
+    /* Tabs */
+    .esc-tabs {
+      display: flex;
+      border-bottom: 1px solid rgba(79, 195, 247, 0.1);
+    }
+    .esc-tab {
+      flex: 1; padding: 11px 0;
+      font-family: 'Courier New', monospace;
+      font-size: 0.62rem; letter-spacing: 0.22em;
+      text-transform: uppercase; text-align: center;
+      color: #4fc3f7; opacity: 0.4;
+      background: none; border: none;
+      cursor: pointer; transition: all 0.15s;
+      border-bottom: 2px solid transparent;
+    }
+    .esc-tab:hover { opacity: 0.75; }
+    .esc-tab.active {
+      opacity: 1;
+      border-bottom-color: #4fc3f7;
+      background: rgba(79, 195, 247, 0.05);
+    }
+
+    /* Tab panes */
+    .esc-pane { display: none; padding: 22px 28px; }
+    .esc-pane.active { display: block; }
+
+    /* Settings rows */
+    .setting-row {
+      display: flex; align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(79, 195, 247, 0.07);
+      gap: 16px;
+    }
+    .setting-row:last-child { border-bottom: none; }
+
+    .setting-label {
+      flex: 1; font-size: 0.7rem; letter-spacing: 0.1em;
+      color: #9ecfec; text-transform: uppercase;
+    }
+    .setting-value {
+      font-size: 0.7rem; color: #4fc3f7;
+      min-width: 36px; text-align: right;
+      letter-spacing: 0.05em;
+    }
+
+    /* Sliders */
+    input[type=range] {
+      -webkit-appearance: none; appearance: none;
+      width: 160px; height: 3px;
+      background: rgba(79, 195, 247, 0.15);
+      border-radius: 2px; outline: none; cursor: pointer;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 13px; height: 13px; border-radius: 50%;
+      background: #4fc3f7;
+      box-shadow: 0 0 6px rgba(79, 195, 247, 0.6);
+    }
+    input[type=range]::-moz-range-thumb {
+      width: 13px; height: 13px; border-radius: 50%;
+      background: #4fc3f7; border: none;
+      box-shadow: 0 0 6px rgba(79, 195, 247, 0.6);
+    }
+
+    /* Toggle buttons */
+    .btn-group { display: flex; gap: 4px; }
+    .btn-opt {
+      padding: 5px 12px;
+      font-family: 'Courier New', monospace;
+      font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase;
+      background: rgba(79, 195, 247, 0.07);
+      border: 1px solid rgba(79, 195, 247, 0.18);
+      border-radius: 3px; color: #9ecfec;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .btn-opt:hover { background: rgba(79, 195, 247, 0.14); }
+    .btn-opt.active {
+      background: rgba(79, 195, 247, 0.22);
+      border-color: #4fc3f7; color: #e0f0ff;
+    }
+
+    /* Player list */
+    #esc-player-list { display: flex; flex-direction: column; gap: 6px; }
+    .esc-player-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px; border-radius: 4px;
+      background: rgba(79, 195, 247, 0.04);
+      border: 1px solid rgba(79, 195, 247, 0.08);
+      font-size: 0.7rem; letter-spacing: 0.08em;
+    }
+    .esc-player-row .pdot {
+      width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+    }
+    .esc-player-row .pname { flex: 1; color: #e0f0ff; }
+    .esc-player-row .pyou {
+      font-size: 0.58rem; letter-spacing: 0.2em;
+      color: #4fc3f7; opacity: 0.6; text-transform: uppercase;
+    }
+
+    /* Action buttons at bottom */
+    .esc-actions {
+      padding: 16px 28px 22px;
+      border-top: 1px solid rgba(79, 195, 247, 0.1);
+      display: flex; gap: 10px; justify-content: flex-end;
+    }
+
+    .esc-btn {
+      padding: 9px 22px;
+      font-family: 'Courier New', monospace;
+      font-size: 0.68rem; letter-spacing: 0.22em; text-transform: uppercase;
+      border-radius: 4px; cursor: pointer; transition: all 0.15s;
+    }
+    .esc-btn-primary {
+      background: linear-gradient(135deg, #0277bd, #006064);
+      border: 1px solid #4fc3f7; color: #e0f0ff;
+    }
+    .esc-btn-primary:hover {
+      background: linear-gradient(135deg, #0288d1, #00838f);
+      box-shadow: 0 0 16px rgba(79, 195, 247, 0.3);
+    }
+    .esc-btn-danger {
+      background: rgba(239, 83, 80, 0.1);
+      border: 1px solid rgba(239, 83, 80, 0.4); color: #ef9a9a;
+    }
+    .esc-btn-danger:hover {
+      background: rgba(239, 83, 80, 0.2);
+      border-color: #ef5350; color: #ffcdd2;
+    }
+
+    /* Keybind table */
+    .keybind-table { width: 100%; border-collapse: collapse; }
+    .keybind-table tr td {
+      padding: 7px 4px;
+      border-bottom: 1px solid rgba(79,195,247,0.06);
+      font-size: 0.68rem;
+    }
+    .keybind-table tr:last-child td { border-bottom: none; }
+    .keybind-table .kkey {
+      color: #4fc3f7;
+      letter-spacing: 0.1em;
+      width: 40%;
+    }
+    .keybind-table .kdesc {
+      color: #9ecfec;
+      letter-spacing: 0.06em;
+    }
+    kbd {
+      display: inline-block;
+      background: rgba(79,195,247,0.12);
+      border: 1px solid rgba(79,195,247,0.25);
+      border-radius: 3px; padding: 1px 6px;
+      font-family: 'Courier New', monospace;
+      font-size: 0.65rem; letter-spacing: 0.05em;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Loading ───────────────────────────────────── -->
+<div id="loading">
+  <div class="logo">ISLAND</div>
+  <div class="logo-sub">Engine v0.1</div>
+  <div class="wave-bar">
+    <span></span><span></span><span></span><span></span>
+    <span></span><span></span><span></span>
+  </div>
+</div>
+
+<!-- ── Join Screen ───────────────────────────────── -->
+<div id="join-screen" class="hidden">
+  <div class="join-title">ISLAND</div>
+  <div class="join-subtitle">Multiplayer · 3D · WebGL</div>
+  <input id="name-input" type="text" placeholder="Enter your name" maxlength="20" autocomplete="off" spellcheck="false" />
+  <button id="join-btn">SET SAIL</button>
+</div>
+
+<!-- ── Canvas ────────────────────────────────────── -->
+<div id="canvas-container"></div>
+
+<!-- ── HUD ───────────────────────────────────────── -->
+<div id="hud" class="hidden">
+  <div class="hud-corner" id="hud-top-left">
+    <div class="hud-label">Position</div>
+    <div class="hud-value" id="hud-pos">0, 0, 0</div>
+    <br/>
+    <div class="hud-label">Players</div>
+    <div id="hud-players"></div>
+  </div>
+  <div class="hud-corner" id="hud-top-right">
+    <div class="hud-label">Ping</div>
+    <div id="ping-display" class="ping-good hud-value">-- ms</div>
+    <br/>
+    <div class="hud-label">Engine</div>
+    <div class="hud-value">Island v0.1</div>
+  </div>
+  <div id="controls-hint">WASD · FLY &nbsp;·&nbsp; MOUSE · LOOK &nbsp;·&nbsp; E/Q · UP/DOWN &nbsp;·&nbsp; SHIFT · FAST &nbsp;·&nbsp; ESC · MENU</div>
+</div>
+
+<div id="crosshair"></div>
+<div id="notifications"></div>
+
+<!-- ── ESC Menu ──────────────────────────────────── -->
+<div id="esc-menu">
+  <div class="esc-panel">
+
+    <div class="esc-header">
+      <h1>Paused</h1>
+      <span>Island Engine v0.1</span>
+    </div>
+
+    <div class="esc-tabs">
+      <button class="esc-tab active" data-tab="settings">Settings</button>
+      <button class="esc-tab" data-tab="players">Players</button>
+      <button class="esc-tab" data-tab="controls">Controls</button>
+    </div>
+
+    <!-- Settings tab -->
+    <div class="esc-pane active" id="tab-settings">
+
+      <div class="setting-row">
+        <div class="setting-label">Mouse Sensitivity</div>
+        <input type="range" id="sens-slider" min="2" max="10" step="0.1" value="6.0" />
+        <div class="setting-value" id="sens-val">6.0</div>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-label">Fly Speed</div>
+        <input type="range" id="speed-slider" min="5" max="100" step="5" value="20" />
+        <div class="setting-value" id="speed-val">20</div>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-label">Render Quality</div>
+        <div class="btn-group">
+          <button class="btn-opt" data-quality="0.5">Low</button>
+          <button class="btn-opt active" data-quality="1">Medium</button>
+          <button class="btn-opt" data-quality="2">High</button>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-label">Shadows</div>
+        <div class="btn-group">
+          <button class="btn-opt active" data-shadow="on">On</button>
+          <button class="btn-opt" data-shadow="off">Off</button>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-label">FOV</div>
+        <input type="range" id="fov-slider" min="50" max="110" step="5" value="65" />
+        <div class="setting-value" id="fov-val">65°</div>
+      </div>
+
+    </div>
+
+    <!-- Players tab -->
+    <div class="esc-pane" id="tab-players">
+      <div id="esc-player-list">
+        <div style="color:#4fc3f7;opacity:0.4;font-size:0.65rem;letter-spacing:0.2em;">CONNECTING...</div>
+      </div>
+    </div>
+
+    <!-- Controls tab -->
+    <div class="esc-pane" id="tab-controls">
+      <table class="keybind-table">
+        <tr><td class="kkey"><kbd>W A S D</kbd></td><td class="kdesc">Fly forward / back / left / right</td></tr>
+        <tr><td class="kkey"><kbd>E</kbd> / <kbd>Space</kbd></td><td class="kdesc">Fly up</td></tr>
+        <tr><td class="kkey"><kbd>Q</kbd> / <kbd>Ctrl</kbd></td><td class="kdesc">Fly down</td></tr>
+        <tr><td class="kkey"><kbd>Shift</kbd></td><td class="kdesc">Speed boost (5×)</td></tr>
+        <tr><td class="kkey"><kbd>Mouse</kbd></td><td class="kdesc">Look around</td></tr>
+        <tr><td class="kkey"><kbd>Click</kbd></td><td class="kdesc">Lock mouse cursor</td></tr>
+        <tr><td class="kkey"><kbd>Esc</kbd></td><td class="kdesc">Open / close this menu</td></tr>
+      </table>
+    </div>
+
+    <div class="esc-actions">
+      <button class="esc-btn esc-btn-danger" id="esc-disconnect">Disconnect</button>
+      <button class="esc-btn esc-btn-primary" id="esc-resume">Resume</button>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── Three.js ───────────────────────────────────── -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module" src="/client/main.js"></script>
+
+</body>
+</html>

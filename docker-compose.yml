@@ -1,26 +1,30 @@
 services:
-  web-playground:
+  island-engine:
     build: .
     networks:
-      web-playground-net:
+      island-net:
         aliases:
-          - web-playground-app
-    volumes:
-      - ./index.ts:/app/index.ts
-      - ./tsconfig.json:/app/tsconfig.json
+          - island-engine-app
     environment:
+      - PORT=3000
       - NODE_ENV=development
-    command: bun --hot run ./index.ts
+    command: bun --hot run ./server/index.ts
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   tailscale:
     image: tailscale/tailscale:latest
-    container_name: web-playground-tailscale
-    hostname: ${TS_HOSTNAME:-web-playground}
+    container_name: island-engine-tailscale
+    hostname: ${TS_HOSTNAME:-island-engine}
     depends_on:
-      - web-playground
+      island-engine:
+        condition: service_healthy
     networks:
-      - web-playground-net
+      - island-net
     environment:
       - TS_AUTHKEY=${TS_AUTHKEY}
       - TS_STATE_DIR=/var/lib/tailscale
@@ -36,12 +40,12 @@ services:
       sh -c "tailscaled &
         sleep 5 &&
         tailscale up --authkey=$${TS_AUTHKEY} &&
-        tailscale funnel --bg --https 443 http://web-playground-app:3000 &&
+        tailscale funnel --bg --https 443 http://island-engine-app:3000 &&
         tail -f /dev/null"
     restart: unless-stopped
 
 networks:
-  web-playground-net:
+  island-net:
 
 volumes:
   tailscale-state:
