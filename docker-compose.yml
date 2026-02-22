@@ -1,0 +1,47 @@
+services:
+  web-playground:
+    build: .
+    networks:
+      web-playground-net:
+        aliases:
+          - web-playground-app
+    volumes:
+      - ./index.ts:/app/index.ts
+      - ./tsconfig.json:/app/tsconfig.json
+    environment:
+      - NODE_ENV=development
+    command: bun --hot run ./index.ts
+    restart: unless-stopped
+
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: web-playground-tailscale
+    hostname: ${TS_HOSTNAME:-web-playground}
+    depends_on:
+      - web-playground
+    networks:
+      - web-playground-net
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=false
+      - TS_AUTH_ONCE=true
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    command: >
+      sh -c "tailscaled &
+        sleep 5 &&
+        tailscale up --authkey=$${TS_AUTHKEY} &&
+        tailscale funnel --bg --https 443 http://web-playground-app:3000 &&
+        tail -f /dev/null"
+    restart: unless-stopped
+
+networks:
+  web-playground-net:
+
+volumes:
+  tailscale-state:
