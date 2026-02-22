@@ -1,39 +1,58 @@
 import * as THREE from 'three';
+import type { PlayerState, ClientMessage, ServerMessage } from '../../shared/types';
 
-const LERP_FACTOR = 0.18; // interpolation per frame for remote players
+const LERP_FACTOR = 0.18;
+
+interface RemotePlayer {
+  mesh: THREE.Mesh;
+  target: {
+    position: THREE.Vector3;
+    rotation: number;
+  };
+  name: string;
+  color: number;
+}
 
 export class NetworkSync {
-  constructor(scene, onWelcome, onNotification) {
-    this.scene          = scene;
-    this.onWelcome      = onWelcome;
+  private scene: THREE.Scene;
+  private onWelcome: (id: string) => void;
+  private onNotification: (msg: string) => void;
+  
+  private ws: WebSocket | null = null;
+  myId: string | null = null;
+  connected: boolean = false;
+  ping: number = 0;
+  
+  private remotePlayers: Map<string, RemotePlayer> = new Map();
+  private _pingInterval: ReturnType<typeof setInterval> | null = null;
+  private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private _playerName: string = '';
+
+  constructor(
+    scene: THREE.Scene, 
+    onWelcome: (id: string) => void, 
+    onNotification: (msg: string) => void
+  ) {
+    this.scene = scene;
+    this.onWelcome = onWelcome;
     this.onNotification = onNotification;
-
-    this.ws          = null;
-    this.myId        = null;
-    this.connected   = false;
-    this.ping        = 0;
-
-    // Map of remote player id -> { mesh, target: {position, rotation} }
-    this.remotePlayers = new Map();
-
-    this._pingInterval  = null;
-    this._reconnectTimer = null;
   }
 
-  connect(playerName) {
+  connect(playerName: string): void {
+    this._playerName = playerName;
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url   = `${proto}//${location.host}`;
-    this.ws     = new WebSocket(url);
+    const url = `${proto}//${location.host}`;
+    this.ws = new WebSocket(url);
 
     this.ws.onopen = () => {
       console.log('[WS] Connected');
       this.connected = true;
-      this.ws.send(JSON.stringify({ type: 'join', name: playerName }));
+      this.ws!.send(JSON.stringify({ type: 'join', name: playerName }));
       this._startPing();
     };
 
     this.ws.onmessage = (event) => {
-      let msg;
+      let msg: ServerMessage;
       try { msg = JSON.parse(event.data); } catch { return; }
       this._handleMessage(msg);
     };
@@ -41,8 +60,7 @@ export class NetworkSync {
     this.ws.onclose = () => {
       console.log('[WS] Disconnected');
       this.connected = false;
-      clearInterval(this._pingInterval);
-      // Try reconnect after 3s
+      if (this._pingInterval) clearInterval(this._pingInterval);
       this._reconnectTimer = setTimeout(() => this.connect(playerName), 3000);
     };
 
@@ -51,11 +69,10 @@ export class NetworkSync {
     };
   }
 
-  _handleMessage(msg) {
+  private _handleMessage(msg: ServerMessage): void {
     switch (msg.type) {
       case 'welcome': {
         this.myId = msg.id;
-        // Spawn all existing players
         for (const p of msg.players) {
           if (p.id !== this.myId) this._spawnRemote(p);
         }
@@ -84,7 +101,6 @@ export class NetworkSync {
       }
 
       case 'tick': {
-        // Full state reconciliation
         for (const p of msg.players) {
           if (p.id === this.myId) continue;
           let rp = this.remotePlayers.get(p.id);
@@ -103,22 +119,21 @@ export class NetworkSync {
     }
   }
 
-  _spawnRemote(playerState) {
+  private _spawnRemote(playerState: PlayerState): void {
     if (this.remotePlayers.has(playerState.id)) return;
 
     const bodyGeo = new THREE.CapsuleGeometry(0.4, 1.2, 4, 8);
     const bodyMat = new THREE.MeshLambertMaterial({ color: playerState.color });
-    const mesh    = new THREE.Mesh(bodyGeo, bodyMat);
+    const mesh = new THREE.Mesh(bodyGeo, bodyMat);
     mesh.castShadow = true;
     mesh.name = `remote_${playerState.id}`;
 
     const headGeo = new THREE.SphereGeometry(0.25, 8, 6);
     const headMat = new THREE.MeshLambertMaterial({ color: 0xffd54f });
-    const head    = new THREE.Mesh(headGeo, headMat);
+    const head = new THREE.Mesh(headGeo, headMat);
     head.position.y = 1.0;
     mesh.add(head);
 
-    // Name tag (floating text via canvas texture)
     const label = this._makeLabel(playerState.name, playerState.color);
     label.position.y = 2.4;
     mesh.add(label);
@@ -134,36 +149,33 @@ export class NetworkSync {
     this.remotePlayers.set(playerState.id, { mesh, target, name: playerState.name, color: playerState.color });
   }
 
-  _makeLabel(name, color) {
-    const canvas  = document.createElement('canvas');
-    canvas.width  = 256;
+  private _makeLabel(name: string, color: number): THREE.Sprite {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
     canvas.height = 64;
-    const ctx     = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d')!;
 
-    // Background pill
     ctx.fillStyle = 'rgba(10,15,26,0.75)';
     ctx.beginPath();
     ctx.roundRect(4, 4, 248, 56, 28);
     ctx.fill();
 
-    // Colored accent bar
     ctx.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
     ctx.fillRect(12, 22, 4, 20);
 
-    // Text
-    ctx.font      = 'bold 22px "Courier New", monospace';
+    ctx.font = 'bold 22px "Courier New", monospace';
     ctx.fillStyle = '#e0f0ff';
     ctx.textAlign = 'left';
     ctx.fillText(name.slice(0, 14), 24, 39);
 
-    const tex  = new THREE.CanvasTexture(canvas);
-    const mat  = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+    const tex = new THREE.CanvasTexture(canvas);
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
     const sprite = new THREE.Sprite(mat);
     sprite.scale.set(2.0, 0.5, 1);
     return sprite;
   }
 
-  _removeRemote(id) {
+  private _removeRemote(id: string): void {
     const rp = this.remotePlayers.get(id);
     if (!rp) return;
     this.scene.remove(rp.mesh);
@@ -171,25 +183,22 @@ export class NetworkSync {
     this.onNotification(`${rp.name} left`);
   }
 
-  // Interpolate remote player positions every frame
-  interpolate() {
+  interpolate(): void {
     for (const [, rp] of this.remotePlayers) {
       rp.mesh.position.lerp(rp.target.position, LERP_FACTOR);
-      // Lerp rotation
       const curY = rp.mesh.rotation.y;
-      let   tgtY = rp.target.rotation + Math.PI;
-      // Shortest angle
-      let   diff = ((tgtY - curY + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+      let tgtY = rp.target.rotation + Math.PI;
+      let diff = ((tgtY - curY + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
       rp.mesh.rotation.y = curY + diff * LERP_FACTOR;
     }
   }
 
-  sendMove(position, rotation) {
+  sendMove(position: { x: number; y: number; z: number }, rotation: number): void {
     if (!this.connected || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     this.ws.send(JSON.stringify({ type: 'move', position, rotation }));
   }
 
-  _startPing() {
+  private _startPing(): void {
     this._pingInterval = setInterval(() => {
       if (this.ws?.readyState === WebSocket.OPEN) {
         this.ws.send(JSON.stringify({ type: 'ping', t: Date.now() }));
@@ -197,17 +206,17 @@ export class NetworkSync {
     }, 2000);
   }
 
-  getRemoteCount() {
+  getRemoteCount(): number {
     return this.remotePlayers.size;
   }
 
-  getRemotePlayers() {
+  getRemotePlayers(): RemotePlayer[] {
     return [...this.remotePlayers.values()];
   }
 
-  destroy() {
-    clearInterval(this._pingInterval);
-    clearTimeout(this._reconnectTimer);
+  destroy(): void {
+    if (this._pingInterval) clearInterval(this._pingInterval);
+    if (this._reconnectTimer) clearTimeout(this._reconnectTimer);
     this.ws?.close();
     for (const [id] of this.remotePlayers) this._removeRemote(id);
   }

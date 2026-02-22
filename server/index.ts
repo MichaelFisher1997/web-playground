@@ -50,8 +50,9 @@ async function serveFile(filePath: string): Promise<Response> {
   });
 }
 
-// ─── Game Loop ────────────────────────────────────────────────────────────────
+import indexHtml from "../client/index.html";
 
+// ─── Game Loop ────────────────────────────────────────────────────────────────
 setInterval(() => {
   if (players.size === 0) return;
   const msg: ServerMessage = { type: "tick", players: [...players.values()] };
@@ -65,31 +66,18 @@ const PORT = parseInt(process.env.PORT ?? "3000", 10);
 const server = Bun.serve<{ id: string }>({
   port: PORT,
 
-  async fetch(req, server) {
-    const url = new URL(req.url);
-    const path = url.pathname;
+  routes: {
+    "/": indexHtml,
+    "/health": new Response(JSON.stringify({ status: "ok" }), {
+      headers: { "Content-Type": "application/json" },
+    }),
+  },
 
+  async fetch(req, server) {
     // ── WebSocket upgrade ────────────────────────────────────────────────────
     if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
       if (server.upgrade(req, { data: { id: generateId() } })) return undefined as unknown as Response;
       return new Response("WebSocket upgrade failed", { status: 400 });
-    }
-
-    // ── Health check ─────────────────────────────────────────────────────────
-    if (path === "/health") {
-      return new Response(JSON.stringify({ status: "ok", players: players.size }), {
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-
-    // ── Static file routing ──────────────────────────────────────────────────
-    if (path === "/" || path === "/index.html") {
-      return serveFile("client/index.html");
-    }
-
-    // client/* and shared/*
-    if (path.startsWith("/client/") || path.startsWith("/shared/")) {
-      return serveFile(path.slice(1)); // strip leading /
     }
 
     return new Response("Not found", { status: 404 });
