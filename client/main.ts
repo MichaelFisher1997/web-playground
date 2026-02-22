@@ -3,11 +3,13 @@ import { WorldGenerator, DEFAULT_CONFIG, WorldConfig } from './world/generator.j
 import { createWater, updateWater } from './world/water.js';
 import { createOceanFloor } from './world/ocean-floor.js';
 import { PlayerController } from './player/controller.js';
+import { PlayModeController } from './player/play-controller.js';
 import { NetworkSync } from './network/sync.js';
 import { MainMenu } from './ui/menu.js';
+import { PlayMenu } from './ui/play-menu.js';
 import { SandboxPanel } from './ui/sandbox-panel.js';
 
-type GameState = 'menu' | 'sandbox' | 'playing' | 'paused';
+type GameState = 'menu' | 'playmenu' | 'sandbox' | 'playing' | 'paused';
 
 const loadingEl = document.getElementById('loading')!;
 const hud = document.getElementById('hud')!;
@@ -89,8 +91,10 @@ let water: THREE.Mesh;
 let oceanFloor: THREE.Mesh | undefined;
 
 let player: PlayerController | null = null;
+let playController: PlayModeController | null = null;
 let net: NetworkSync | null = null;
 let mainMenu: MainMenu;
+let playMenu: PlayMenu;
 let sandboxPanel: SandboxPanel;
 
 let gameState: GameState = 'menu';
@@ -104,6 +108,22 @@ function showNotification(text: string): void {
   div.textContent = text;
   notifications.appendChild(div);
   setTimeout(() => div.remove(), 3200);
+}
+
+function getRandomSpawnPosition(): { x: number; y: number; z: number } {
+  const islands = generator.getIslands();
+  if (islands.length === 0) {
+    return { x: 0, y: 50, z: 0 };
+  }
+  
+  const randomIsland = islands[Math.floor(Math.random() * islands.length)];
+  const angle = Math.random() * Math.PI * 2;
+  const dist = Math.random() * randomIsland.radius * 0.5;
+  const x = randomIsland.x + Math.cos(angle) * dist;
+  const z = randomIsland.z + Math.sin(angle) * dist;
+  const y = generator.getHeightAt(x, z) + 2;
+  
+  return { x, y, z };
 }
 
 function initWorld(config: Partial<WorldConfig> = {}, resetPosition: boolean = true): void {
@@ -207,31 +227,68 @@ function addDecorations(): void {
   }
 }
 
+function startPlayMode(config: WorldConfig): void {
+  gameState = 'playing';
+  playMenu.hide();
+  hud.classList.remove('hidden');
+  
+  // Show health/stamina bars in play mode
+  const hudBars = document.getElementById('hud-bars');
+  if (hudBars) hudBars.style.display = 'flex';
+  
+  initWorld(config, false);
+  
+  const spawnPos = getRandomSpawnPosition();
+  playController = new PlayModeController(scene, camera, generator, spawnPos);
+  playController.sensitivity = parseFloat((document.getElementById('sens-slider') as HTMLInputElement).value);
+  
+  // Set up callbacks
+  playController.onHealthChange = (health) => {
+    updateHealthBar(health);
+  };
+  playController.onStaminaChange = (stamina) => {
+    updateStaminaBar(stamina);
+  };
+  playController.onWaterDeath = () => {
+    showNotification('You fell into the water! Respawning...');
+  };
+  
+  // Initialize HUD bars
+  updateHealthBar(100);
+  updateStaminaBar(100);
+  
+  setTimeout(() => playController?.requestPointerLock(), 100);
+}
+
+function updateHealthBar(health: number): void {
+  const healthFill = document.getElementById('health-fill');
+  const healthText = document.getElementById('health-text');
+  if (healthFill) {
+    healthFill.style.width = `${health}%`;
+    healthFill.style.background = health > 60 ? '#4ade80' : health > 30 ? '#fbbf24' : '#ef4444';
+  }
+  if (healthText) {
+    healthText.textContent = `${Math.round(health)}`;
+  }
+}
+
+function updateStaminaBar(stamina: number): void {
+  const staminaFill = document.getElementById('stamina-fill');
+  const staminaText = document.getElementById('stamina-text');
+  if (staminaFill) {
+    staminaFill.style.width = `${stamina}%`;
+  }
+  if (staminaText) {
+    staminaText.textContent = `${Math.round(stamina)}`;
+  }
+}
+
 mainMenu = new MainMenu({
-  onPlay: () => {
-    gameState = 'playing';
+  onPlay: () => {},
+  onPlayMenu: () => {
+    gameState = 'playmenu';
     mainMenu.hide();
-    hud.classList.remove('hidden');
-    initWorld();
-    
-    player = new PlayerController(scene, camera);
-    player.sensitivity = parseFloat((document.getElementById('sens-slider') as HTMLInputElement).value);
-    player.speed = parseInt((document.getElementById('speed-slider') as HTMLInputElement).value, 10);
-    
-    const nameInput = document.getElementById('name-input') as HTMLInputElement;
-    playerName = nameInput.value.trim() || 'Explorer';
-    
-    net = new NetworkSync(
-      scene,
-      (id) => {
-        console.log(`[Net] My ID: ${id}`);
-        showNotification(`You joined as ${playerName}`);
-      },
-      showNotification
-    );
-    net.connect(playerName);
-    
-    setTimeout(() => player?.requestPointerLock(), 100);
+    playMenu.show();
   },
   onSandbox: () => {
     gameState = 'sandbox';
@@ -251,41 +308,54 @@ mainMenu = new MainMenu({
   },
 });
 
+playMenu = new PlayMenu({
+  onStart: (config) => {
+    startPlayMode(config);
+  },
+  onBack: () => {
+    gameState = 'menu';
+    playMenu.hide();
+    mainMenu.show();
+    // Hide HUD bars when going back to menu
+    const hudBars = document.getElementById('hud-bars');
+    if (hudBars) hudBars.style.display = 'none';
+  },
+});
+
 sandboxPanel = new SandboxPanel({
   onGenerate: (config) => {
-    initWorld(config, false); // Don't reset position when auto-generating from sliders
+    initWorld(config, false);
   },
   onRandomSeed: () => Math.floor(Math.random() * 1000000),
 });
 
 function openEsc(): void {
-  if (gameState === 'menu') return;
+  if (gameState === 'menu' || gameState === 'playmenu') return;
   escOpen = true;
   escMenu.classList.add('open');
   player?.releasePointerLock();
+  playController?.releasePointerLock();
   refreshEscPlayers();
 }
 
 function closeEsc(): void {
   escOpen = false;
   escMenu.classList.remove('open');
-  setTimeout(() => player?.requestPointerLock(), 80);
+  setTimeout(() => {
+    player?.requestPointerLock();
+    playController?.requestPointerLock();
+  }, 80);
 }
 
 document.addEventListener('pointerlockchange', () => {
-  if (gameState === 'sandbox') return; // God mode doesn't use pointer lock
+  if (gameState === 'sandbox') return;
 
   const isLocked = document.pointerLockElement === document.body;
   crosshair.classList.toggle('active', isLocked);
-  
-  if (!isLocked && gameState !== 'menu' && (escRequestedWhileLocked || !escOpen)) {
-    escRequestedWhileLocked = false;
-    openEsc();
-  }
 });
 
 document.addEventListener('keydown', (e) => {
-  if (gameState === 'menu') return;
+  if (gameState === 'menu' || gameState === 'playmenu') return;
 
   if (e.code === 'Escape') {
     if (gameState === 'sandbox') {
@@ -299,7 +369,8 @@ document.addEventListener('keydown', (e) => {
     
     const isLocked = document.pointerLockElement === document.body;
     if (isLocked) {
-      escRequestedWhileLocked = true;
+      e.preventDefault();
+      openEsc();
       return;
     }
     
@@ -313,13 +384,14 @@ document.addEventListener('keydown', (e) => {
 });
 
 document.getElementById('canvas-container')!.addEventListener('click', () => {
-  if (!escOpen && gameState === 'playing') player?.requestPointerLock();
+  if (!escOpen && gameState === 'playing') {
+    playController?.requestPointerLock();
+  }
 });
 
 document.getElementById('esc-resume')!.addEventListener('click', closeEsc);
 
 document.getElementById('esc-disconnect')!.addEventListener('click', () => {
-  net?.destroy();
   location.reload();
 });
 
@@ -340,6 +412,7 @@ sensSlider.addEventListener('input', () => {
   const v = parseFloat(sensSlider.value);
   sensVal.textContent = v.toFixed(1);
   if (player) player.sensitivity = v;
+  if (playController) playController.sensitivity = v;
 });
 
 const speedSlider = document.getElementById('speed-slider') as HTMLInputElement;
@@ -407,13 +480,15 @@ function refreshEscPlayers(): void {
 
 let hudTick = 0;
 function updateHUD(): void {
-  if (!player) return;
-  hudTick++;
+  if (gameState === 'playing' && playController) {
+    const state = playController.getState();
+    hudPos.textContent = `${state.position.x.toFixed(1)}, ${state.position.y.toFixed(1)}, ${state.position.z.toFixed(1)}`;
+  } else if (player) {
+    const p = camera.position;
+    hudPos.textContent = `${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}`;
+  }
 
-  const p = camera.position;
-  hudPos.textContent = `${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}`;
-
-  if (hudTick % 20 === 0 && net) {
+  if (hudTick % 20 === 0 && net && gameState !== 'playing') {
     const remotes = net.getRemotePlayers();
     let html = `<div style="color:#e0f0ff"><span class="player-dot" style="background:#4fc3f7"></span>${playerName || 'You'}</div>`;
     for (const rp of remotes) {
@@ -426,6 +501,8 @@ function updateHUD(): void {
     pingDisplay.textContent = `${ms} ms`;
     pingDisplay.className = ms < 80 ? 'ping-good hud-value' : ms < 200 ? 'ping-mid hud-value' : 'ping-bad hud-value';
   }
+  
+  hudTick++;
 }
 
 window.addEventListener('resize', () => {
@@ -450,14 +527,18 @@ function animate(): void {
     updateWater(water, time, camera.position);
   }
 
-  if (player && !escOpen && gameState !== 'menu') {
-    player.update(dt);
+  if (!escOpen && gameState !== 'menu' && gameState !== 'playmenu') {
+    if (gameState === 'playing' && playController) {
+      playController.update(dt);
+    } else if (player) {
+      player.update(dt);
+    }
 
     if (gameState === 'playing' && net) {
       sendThrottle += dt;
       if (sendThrottle >= 0.05) {
         sendThrottle = 0;
-        const state = player.getState();
+        const state = playController!.getState();
         net.sendMove(state.position, state.rotation);
       }
       net.interpolate();

@@ -1,7 +1,8 @@
-export type GameState = 'menu' | 'sandbox' | 'playing' | 'paused';
+export type GameState = 'menu' | 'sandbox' | 'playmenu' | 'playing' | 'paused';
 
 export interface MenuCallbacks {
   onPlay: () => void;
+  onPlayMenu: () => void;
   onSandbox: () => void;
   onQuit: () => void;
 }
@@ -47,7 +48,7 @@ export class MainMenu {
     `;
     
     div.querySelector('#btn-play')?.addEventListener('click', () => {
-      this.callbacks.onPlay();
+      this.callbacks.onPlayMenu();
     });
     
     div.querySelector('#btn-sandbox')?.addEventListener('click', () => {

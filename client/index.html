@@ -297,6 +297,155 @@
       line-height: 14px;
       font-size: 10px;
       font-weight: bold;
+    }
+
+    /* ─── Play Menu ─────────────────────────────────────────────────────── */
+    .play-menu {
+      position: fixed; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      z-index: 95;
+      background: rgba(6, 10, 18, 0.9);
+      backdrop-filter: blur(20px);
+    }
+    .play-menu.hidden { display: none; }
+
+    .preset-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      padding: 20px 28px;
+      max-height: 360px;
+      overflow-y: auto;
+    }
+
+    .preset-card {
+      background: rgba(79, 195, 247, 0.05);
+      border: 1px solid rgba(79, 195, 247, 0.15);
+      border-radius: 6px;
+      padding: 16px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .preset-card:hover {
+      background: rgba(79, 195, 247, 0.1);
+      border-color: rgba(79, 195, 247, 0.3);
+      transform: translateY(-2px);
+    }
+    .preset-card.selected {
+      background: rgba(79, 195, 247, 0.15);
+      border-color: #4fc3f7;
+      box-shadow: 0 0 20px rgba(79, 195, 247, 0.2);
+    }
+
+    .preset-icon {
+      font-size: 2rem;
+      margin-bottom: 8px;
+    }
+    .preset-name {
+      font-size: 0.8rem;
+      font-weight: bold;
+      letter-spacing: 0.1em;
+      color: #e0f0ff;
+      margin-bottom: 4px;
+    }
+    .preset-desc {
+      font-size: 0.6rem;
+      color: #9ecfec;
+      opacity: 0.7;
+      margin-bottom: 8px;
+      line-height: 1.4;
+    }
+    .preset-stats {
+      display: flex;
+      gap: 8px;
+      font-size: 0.55rem;
+      color: #4fc3f7;
+      opacity: 0.6;
+    }
+    .preset-stat {
+      background: rgba(79, 195, 247, 0.1);
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+    .preset-difficulty {
+      display: inline-block;
+      font-size: 0.55rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      padding: 3px 8px;
+      border-radius: 3px;
+      margin-top: 8px;
+    }
+    .preset-difficulty.easy {
+      background: rgba(76, 175, 80, 0.2);
+      color: #81c784;
+    }
+    .preset-difficulty.normal {
+      background: rgba(79, 195, 247, 0.2);
+      color: #4fc3f7;
+    }
+    .preset-difficulty.hard {
+      background: rgba(239, 83, 80, 0.2);
+      color: #ef5350;
+    }
+
+    /* ─── Health & Stamina Bars ────────────────────────────────────────── */
+    .hud-bars {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      width: 200px;
+    }
+
+    .hud-bar {
+      background: rgba(10, 15, 26, 0.8);
+      border: 1px solid rgba(79, 195, 247, 0.15);
+      border-radius: 4px;
+      height: 24px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .hud-bar-fill {
+      height: 100%;
+      transition: width 0.15s ease, background 0.3s ease;
+      position: relative;
+    }
+
+    .hud-bar-label {
+      position: absolute;
+      top: 50%;
+      left: 8px;
+      transform: translateY(-50%);
+      font-size: 0.6rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.8);
+      z-index: 1;
+    }
+
+    .hud-bar-value {
+      position: absolute;
+      top: 50%;
+      right: 8px;
+      transform: translateY(-50%);
+      font-size: 0.65rem;
+      font-weight: bold;
+      color: rgba(255, 255, 255, 0.9);
+      z-index: 1;
+    }
+
+    #health-fill {
+      background: linear-gradient(90deg, #22c55e, #4ade80);
+      box-shadow: 0 0 10px rgba(74, 222, 128, 0.3);
+    }
+
+    #stamina-fill {
+      background: linear-gradient(90deg, #3b82f6, #60a5fa);
+      box-shadow: 0 0 10px rgba(96, 165, 250, 0.3)
       margin-left: 6px;
       cursor: help;
     }
@@ -394,16 +543,17 @@
 
     /* ─── Crosshair ────────────────────────────────────────────────────── */
     #crosshair {
-      position: fixed; top: 50%; left: 50%;
-      transform: translate(-50%, -50%);
+      position: fixed;
       width: 18px; height: 18px;
       pointer-events: none; z-index: 10; display: none;
+      margin: 0;
+      padding: 0;
     }
     #crosshair::before, #crosshair::after {
-      content: ''; position: absolute; background: rgba(255,255,255,0.7); border-radius: 1px;
+      content: ''; position: absolute; background: rgba(255,255,255,0.9); border-radius: 1px;
     }
-    #crosshair::before { width: 2px; height: 100%; left: 50%; transform: translateX(-50%); }
-    #crosshair::after  { height: 2px; width: 100%; top: 50%; transform: translateY(-50%); }
+    #crosshair::before { width: 2px; height: 100%; left: 50%; margin-left: -1px; }
+    #crosshair::after  { height: 2px; width: 100%; top: 50%; margin-top: -1px; }
     #crosshair.active { display: block; }
 
     /* ─── ESC Menu ─────────────────────────────────────────────────────── */
@@ -641,6 +791,21 @@
     <div class="hud-label">Engine</div>
     <div class="hud-value">Island v0.2</div>
   </div>
+  
+  <!-- Health & Stamina Bars -->
+  <div class="hud-bars" id="hud-bars" style="display: none;">
+    <div class="hud-bar" id="health-bar">
+      <div class="hud-bar-label">Health</div>
+      <div class="hud-bar-fill" id="health-fill" style="width: 100%"></div>
+      <div class="hud-bar-value" id="health-text">100</div>
+    </div>
+    <div class="hud-bar" id="stamina-bar">
+      <div class="hud-bar-label">Stamina</div>
+      <div class="hud-bar-fill" id="stamina-fill" style="width: 100%"></div>
+      <div class="hud-bar-value" id="stamina-text">100</div>
+    </div>
+  </div>
+  
   <div id="controls-hint">WASD · FLY &nbsp;·&nbsp; MOUSE · LOOK &nbsp;·&nbsp; E/Q · UP/DOWN &nbsp;·&nbsp; SHIFT · FAST &nbsp;·&nbsp; TAB · SANDBOX &nbsp;·&nbsp; ESC · MENU</div>
 </div>
 
