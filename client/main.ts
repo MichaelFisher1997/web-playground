@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { WorldGenerator, DEFAULT_CONFIG, WorldConfig } from './world/generator.js';
-import { createWater, updateWater } from './world/water.js';
-import { createOceanFloor } from './world/ocean-floor.js';
+import { createWater, updateWater, setWaterParams, resizeWaterUniforms } from './world/water.js';
+import { createOceanFloor, updateOceanFloor } from './world/ocean-floor.js';
 import { PlayerController } from './player/controller.js';
 import { PlayModeController } from './player/play-controller.js';
 import { NetworkSync } from './network/sync.js';
@@ -28,6 +28,21 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.9;
 document.getElementById('canvas-container')!.appendChild(renderer.domElement);
+
+// ---- Depth pre-pass render target ----
+// We render the scene (water hidden) into this, then give the depth+colour
+// textures to the water shader so it can compute real underwater transparency.
+function makeDepthRT(w: number, h: number): THREE.WebGLRenderTarget {
+  const depthTex = new THREE.DepthTexture(w, h);
+  depthTex.type = THREE.UnsignedIntType;
+  const rt = new THREE.WebGLRenderTarget(w, h, {
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    depthTexture: depthTex,
+  });
+  return rt;
+}
+let depthRT = makeDepthRT(window.innerWidth, window.innerHeight);
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.FogExp2(0x8ec5d6, 0.004);
@@ -148,6 +163,7 @@ function initWorld(config: Partial<WorldConfig> = {}, resetPosition: boolean = t
   // Update fog density
   if (scene.fog) {
     (scene.fog as THREE.FogExp2).density = worldConfig.fogDensity;
+    (scene as any)._targetFogDensity = worldConfig.fogDensity;
   }
 
   generator = new WorldGenerator(worldConfig);
@@ -156,11 +172,16 @@ function initWorld(config: Partial<WorldConfig> = {}, resetPosition: boolean = t
   terrain = generator.createTerrain();
   scene.add(terrain);
 
+  const islands = generator.getIslands();
   water = createWater({
     size: worldConfig.worldSize * 1.3,
     waterHeight: worldConfig.waterHeight,
     waveHeight: worldConfig.waveHeight,
     waveSpeed: worldConfig.waveSpeed,
+    skyColorTop:    (skyMat.uniforms.uTop.value    as THREE.Color),
+    skyColorBottom: (skyMat.uniforms.uBottom.value as THREE.Color),
+    islandCenters: islands.map(isl => ({ x: isl.x, z: isl.z })),
+    islandRadii:   islands.map(isl => isl.radius),
   });
   scene.add(water);
 
@@ -509,6 +530,10 @@ window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  // Resize depth render target
+  depthRT.dispose();
+  depthRT = makeDepthRT(window.innerWidth, window.innerHeight);
+  if (water) resizeWaterUniforms(water, window.innerWidth, window.innerHeight);
 });
 
 setTimeout(() => {
@@ -518,13 +543,56 @@ setTimeout(() => {
 const clock = new THREE.Clock();
 let sendThrottle = 0;
 
+// Reusable sun direction vector (world-space, normalised)
+const _sunDir = new THREE.Vector3();
+
+// Fog colours for above/below water transitions
+const _fogColorAbove = new THREE.Color(0x8ec5d6);
+const _fogColorUnder = new THREE.Color(0x062d52);
+
 function animate(): void {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
   const time = clock.getElapsedTime();
 
+  // Compute current sun direction from scene light position
+  _sunDir.copy(sunLight.position).normalize();
+
+  // ---- Depth pre-pass (render scene without water into depthRT) ----
   if (water) {
-    updateWater(water, time, camera.position);
+    water.visible = false;
+    renderer.setRenderTarget(depthRT);
+    renderer.render(scene, camera);
+    renderer.setRenderTarget(null);
+    water.visible = true;
+
+    updateWater(
+      water, time, camera.position, _sunDir,
+      depthRT.depthTexture,
+      depthRT.texture,
+      camera,
+    );
+  }
+
+  if (oceanFloor) {
+    updateOceanFloor(oceanFloor, time, _sunDir);
+  }
+
+  // --- Underwater atmosphere ---
+  if (scene.fog && water) {
+    const waterY = water.position.y;
+    const isUnder = camera.position.y < waterY;
+    const fog = scene.fog as THREE.FogExp2;
+    if (isUnder) {
+      fog.color.lerp(_fogColorUnder, 0.12);
+      fog.density = Math.min(fog.density + 0.002, 0.045);
+      scene.background = fog.color;
+    } else {
+      fog.color.lerp(_fogColorAbove, 0.12);
+      const targetDensity = (scene as any)._targetFogDensity ?? 0.004;
+      fog.density = fog.density + (targetDensity - fog.density) * 0.08;
+      scene.background = new THREE.Color(0x6aaec8);
+    }
   }
 
   if (!escOpen && gameState !== 'menu' && gameState !== 'playmenu') {
@@ -543,7 +611,7 @@ function animate(): void {
       }
       net.interpolate();
     }
-    
+
     updateHUD();
   }
 
