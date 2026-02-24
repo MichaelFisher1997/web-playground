@@ -294,9 +294,9 @@ function raycastWater(event: MouseEvent): { hit: boolean; x: number; z: number }
 
   const waterPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -worldManager.generator.config.waterHeight);
   const intersection = new THREE.Vector3();
-  raycaster.ray.intersectPlane(waterPlane, intersection);
+  const hit = raycaster.ray.intersectPlane(waterPlane, intersection);
 
-  if (intersection) {
+  if (hit) {
     return { hit: true, x: intersection.x, z: intersection.z };
   }
   return { hit: false, x: 0, z: 0 };
@@ -351,8 +351,12 @@ const inputManager = new GameInputManager({
   },
   onToggleGodMode: () => toggleGodMode(),
   onToggleSandboxPanel: () => state.sandboxPanel?.toggle(),
-  onToggleSpawnPanel: () => state.spawnPanel?.toggle(),
+  onToggleSpawnPanel: () => {
+    if (state.escOpen || globalMap.isVisible) return;
+    state.spawnPanel?.toggle();
+  },
   onToggleGlobalMap: () => {
+    if (state.escOpen) return;
     globalMap.toggle();
     if (globalMap.isVisible) {
       globalMap.resetPan();
@@ -378,6 +382,7 @@ const inputManager = new GameInputManager({
   onGlobalMapOpened: () => {},
   onGlobalMapClosed: () => {},
   onCanvasClick: (event: MouseEvent) => {
+    if (state.escOpen || globalMap.isVisible) return;
     const canSpawn = state.gameState === 'sandbox' || (state.gameState === 'playing' && state.godModeActive);
     if (state.spawnPanel?.isSpawnModeActive() && canSpawn) {
       const result = raycastWater(event);

@@ -23,6 +23,15 @@ export class ShipSystem {
     return this.drivenShip;
   }
 
+  clearDrivenState(playController?: PlayModeController): void {
+    if (playController) {
+      playController.setDrivingBoat(false);
+    }
+    this.drivenShip = null;
+    this.deckOffset.x = 0;
+    this.deckOffset.z = 0;
+  }
+
   async spawnShipAt(x: number, z: number, time: number): Promise<void> {
     const { mesh, body } = await createShip();
     const waterY = this.getWaterHeight(x, z, time);

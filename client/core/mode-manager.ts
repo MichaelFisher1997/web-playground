@@ -42,6 +42,14 @@ export class ModeManager {
 
   startPlayMode(config: WorldConfig): void {
     const { state } = this.context;
+    state.player?.destroy();
+    state.player = null;
+    state.godPlayer?.destroy();
+    state.godPlayer = null;
+    state.playController?.destroy();
+    state.playController = null;
+    this.context.shipSystem.clearDrivenState();
+    this.context.disableSpawnMode();
     state.gameState = 'playing';
     state.godModeActive = false;
     this.context.hidePlayMenu();
@@ -86,7 +94,14 @@ export class ModeManager {
 
   startSandboxMode(): void {
     const { state } = this.context;
+    state.playController?.destroy();
+    state.playController = null;
+    state.godPlayer?.destroy();
+    state.godPlayer = null;
+    this.context.shipSystem.clearDrivenState();
+    this.context.disableSpawnMode();
     state.gameState = 'sandbox';
+    state.godModeActive = false;
     this.context.hud.classList.remove('hidden');
     this.context.initWorld({
       islandCount: 1,
@@ -112,6 +127,9 @@ export class ModeManager {
 
     if (state.godModeActive) {
       state.playController?.releasePointerLock();
+      if (state.playController) {
+        this.context.shipSystem.clearDrivenState(state.playController);
+      }
       const currentPos = state.playController
         ? state.playController.getState().position
         : { x: this.context.camera.position.x, y: this.context.camera.position.y, z: this.context.camera.position.z };
