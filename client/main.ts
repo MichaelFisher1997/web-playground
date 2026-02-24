@@ -16,6 +16,7 @@ import { WorldManager } from './core/world-manager.js';
 import { GameInputManager } from './input/game-input-manager.js';
 import { UIRuntimeManager } from './core/ui-runtime-manager.js';
 import { GameLoop } from './core/game-loop.js';
+import { startPlayMode as runPlayMode, startSandboxMode, toggleGodMode as runToggleGodMode } from './core/mode-manager.js';
 
 type GameState = 'menu' | 'playmenu' | 'sandbox' | 'playing' | 'paused';
 
@@ -178,116 +179,51 @@ function initWorld(config: Partial<WorldConfig> = {}, resetPosition: boolean = t
 }
 
 function startPlayMode(config: WorldConfig): void {
-  state.gameState = 'playing';
-  state.godModeActive = false;
-  state.playMenu?.hide();
-  hud.classList.remove('hidden');
-  
-  const hudBars = document.getElementById('hud-bars');
-  if (hudBars) hudBars.style.display = 'flex';
-  
-  initWorld(config, false);
-  
-  const spawnPos = worldManager.getRandomSpawnPosition();
-  const callbacks: PlayControllerCallbacks = {
-    getShipDeckHeight: (x: number, z: number): number | null => {
-      let highestDeck: number | null = null;
-      for (const ship of spawnedShips) {
-        const deckY = getDeckHeightAt(ship, x, z);
-        if (deckY !== null && (highestDeck === null || deckY > highestDeck)) {
-          highestDeck = deckY;
-        }
-      }
-      return highestDeck;
-    },
-    onHealthChange: (health: number) => {
-      updateHealthBar(health);
-    },
-    onStaminaChange: (stamina: number) => {
-      updateStaminaBar(stamina);
-    },
-    onWaterDeath: () => {
-      showNotification('You fell into the water! Respawning...');
-    },
-    onEnterBoat: () => {
-      const playerPos = state.playController?.getCharacterPosition();
-      if (!playerPos) return;
-      for (const ship of spawnedShips) {
-        const deckY = getDeckHeightAt(ship, playerPos.x, playerPos.z);
-        if (deckY !== null) {
-          state.drivenShip = ship;
-          state.deckOffset.x = 1.8;
-          state.deckOffset.z = 0;
-          const shipPos = ship.body.position;
-          const shipRot = ship.body.rotation.y;
-          const cos = Math.cos(shipRot);
-          const sin = Math.sin(shipRot);
-          const helmX = shipPos.x + state.deckOffset.x * cos - state.deckOffset.z * sin;
-          const helmZ = shipPos.z + state.deckOffset.x * sin + state.deckOffset.z * cos;
-          const helmY = getDeckHeightAt(ship, helmX, helmZ) ?? deckY;
-          state.playController?.setPosition(helmX, helmY, helmZ);
-          state.playController?.setDrivingBoat(true);
-          showNotification('Driving boat! WASD to steer, E to exit');
-          break;
-        }
-      }
-    },
-    onExitBoat: () => {
-      if (state.drivenShip && state.playController) {
-        const shipPos = state.drivenShip.body.position;
-        const shipRot = state.drivenShip.body.rotation.y;
-        const cos = Math.cos(shipRot);
-        const sin = Math.sin(shipRot);
-        const exitX = shipPos.x + state.deckOffset.x * cos - state.deckOffset.z * sin + 2;
-        const exitZ = shipPos.z + state.deckOffset.x * sin + state.deckOffset.z * cos;
-        const exitY = getDeckHeightAt(state.drivenShip, exitX, exitZ) ?? shipPos.y + 2;
-        state.playController.setPosition(exitX, exitY, exitZ);
-        state.playController.setDrivingBoat(false);
-      }
-      state.drivenShip = null;
-      showNotification('Exited boat');
-    },
-    onBoatInput: (thrust: number, steering: number) => {
-      if (state.drivenShip) {
-        applyBoatInput(state.drivenShip.body, thrust, steering);
-      }
-    },
-  };
-  state.playController = new PlayModeController(scene, camera, worldManager.generator, spawnPos, callbacks);
-  state.playController.sensitivity = parseFloat((document.getElementById('sens-slider') as HTMLInputElement).value);
-  
-  updateHealthBar(100);
-  updateStaminaBar(100);
-  
-  setTimeout(() => state.playController?.requestPointerLock(), 100);
+  runPlayMode({
+    state,
+    scene,
+    camera,
+    hud,
+    worldManager,
+    spawnedShips,
+    initWorld,
+    hidePlayMenu: () => state.playMenu?.hide(),
+    showSpawnPanel: () => state.spawnPanel?.show(),
+    hideSpawnPanel: () => state.spawnPanel?.hide(),
+    disableSpawnMode: () => state.spawnPanel?.toggleSpawnMode(false),
+    showSandboxPanel: () => state.sandboxPanel?.show(),
+    showNotification,
+    updateHealthBar,
+    updateStaminaBar,
+    getSensitivity: () => parseFloat((document.getElementById('sens-slider') as HTMLInputElement).value),
+    getSpeed: () => parseInt((document.getElementById('speed-slider') as HTMLInputElement).value, 10),
+    getDeckHeightAt,
+    applyBoatInput,
+  }, config);
 }
 
 function toggleGodMode(): void {
-  if (state.gameState !== 'playing') return;
-  
-  state.godModeActive = !state.godModeActive;
-  
-  if (state.godModeActive) {
-    state.playController?.releasePointerLock();
-    
-    const currentPos = state.playController ? state.playController.getState().position : { x: camera.position.x, y: camera.position.y, z: camera.position.z };
-    if (!state.godPlayer) {
-      state.godPlayer = new PlayerController(scene, camera, 'god');
-      state.godPlayer.sensitivity = parseFloat((document.getElementById('sens-slider') as HTMLInputElement).value);
-      state.godPlayer.speed = parseInt((document.getElementById('speed-slider') as HTMLInputElement).value, 10);
-    }
-    camera.position.set(currentPos.x, currentPos.y + 15, currentPos.z + 10);
-    
-    state.godPlayer.requestPointerLock();
-    state.spawnPanel?.show();
-    showNotification('God Mode ON - Press Y to exit');
-  } else {
-    state.godPlayer?.releasePointerLock();
-    state.spawnPanel?.hide();
-    state.spawnPanel?.toggleSpawnMode(false);
-    state.playController?.requestPointerLock();
-    showNotification('God Mode OFF');
-  }
+  runToggleGodMode({
+    state,
+    scene,
+    camera,
+    hud,
+    worldManager,
+    spawnedShips,
+    initWorld,
+    hidePlayMenu: () => state.playMenu?.hide(),
+    showSpawnPanel: () => state.spawnPanel?.show(),
+    hideSpawnPanel: () => state.spawnPanel?.hide(),
+    disableSpawnMode: () => state.spawnPanel?.toggleSpawnMode(false),
+    showSandboxPanel: () => state.sandboxPanel?.show(),
+    showNotification,
+    updateHealthBar,
+    updateStaminaBar,
+    getSensitivity: () => parseFloat((document.getElementById('sens-slider') as HTMLInputElement).value),
+    getSpeed: () => parseInt((document.getElementById('speed-slider') as HTMLInputElement).value, 10),
+    getDeckHeightAt,
+    applyBoatInput,
+  });
 }
 
 function updateHealthBar(health: number): void {
@@ -321,28 +257,28 @@ state.mainMenu = new MainMenu({
     state.playMenu?.show();
   },
   onSandbox: () => {
-    state.gameState = 'sandbox';
     state.mainMenu?.hide();
-    hud.classList.remove('hidden');
-    
-    const singleIslandConfig: Partial<WorldConfig> = {
-      islandCount: 1,
-      minIslandSize: 180,
-      maxIslandSize: 220,
-      noiseFrequency: 1.2,
-      noiseOctaves: 7,
-      worldSize: 600,
-      resolution: 200,
-      fogDensity: 0.003,
-    };
-    initWorld(singleIslandConfig);
-    
-    state.player = new PlayerController(scene, camera, 'god');
-    state.player.sensitivity = parseFloat((document.getElementById('sens-slider') as HTMLInputElement).value);
-    state.player.speed = parseInt((document.getElementById('speed-slider') as HTMLInputElement).value, 10);
-    
-    state.sandboxPanel?.show();
-    state.spawnPanel?.show();
+    startSandboxMode({
+      state,
+      scene,
+      camera,
+      hud,
+      worldManager,
+      spawnedShips,
+      initWorld,
+      hidePlayMenu: () => state.playMenu?.hide(),
+      showSpawnPanel: () => state.spawnPanel?.show(),
+      hideSpawnPanel: () => state.spawnPanel?.hide(),
+      disableSpawnMode: () => state.spawnPanel?.toggleSpawnMode(false),
+      showSandboxPanel: () => state.sandboxPanel?.show(),
+      showNotification,
+      updateHealthBar,
+      updateStaminaBar,
+      getSensitivity: () => parseFloat((document.getElementById('sens-slider') as HTMLInputElement).value),
+      getSpeed: () => parseInt((document.getElementById('speed-slider') as HTMLInputElement).value, 10),
+      getDeckHeightAt,
+      applyBoatInput,
+    });
   },
   onQuit: () => {
     state.mainMenu?.hide();
