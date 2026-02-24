@@ -33,6 +33,7 @@ const MIME: Record<string, string> = {
   json: "application/json",
   png:  "image/png",
   svg:  "image/svg+xml",
+  glb:  "model/gltf-binary",
 };
 
 function mimeFor(path: string): string {
@@ -71,6 +72,7 @@ const server = Bun.serve<{ id: string }>({
     "/health": new Response(JSON.stringify({ status: "ok" }), {
       headers: { "Content-Type": "application/json" },
     }),
+    "/Sail_Ship.glb": () => serveFile("/app/Sail_Ship.glb"),
   },
 
   async fetch(req, server) {

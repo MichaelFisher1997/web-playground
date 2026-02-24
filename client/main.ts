@@ -8,6 +8,11 @@ import { NetworkSync } from './network/sync.js';
 import { MainMenu } from './ui/menu.js';
 import { PlayMenu } from './ui/play-menu.js';
 import { SandboxPanel } from './ui/sandbox-panel.js';
+import { SpawnPanel } from './ui/spawn-panel.js';
+import { Minimap } from './ui/minimap.js';
+import { GlobalMap } from './ui/global-map.js';
+import { createShip, updateShipMesh, SpawnedShip, getDeckHeightAt } from './objects/ship.js';
+import { updateBuoyancy, WaterHeightFn, applyBoatInput } from './physics/buoyancy.js';
 
 type GameState = 'menu' | 'playmenu' | 'sandbox' | 'playing' | 'paused';
 
@@ -19,6 +24,13 @@ const pingDisplay = document.getElementById('ping-display')!;
 const notifications = document.getElementById('notifications')!;
 const escMenu = document.getElementById('esc-menu')!;
 const crosshair = document.getElementById('crosshair')!;
+const minimapEl = document.getElementById('minimap')!;
+const minimapCanvas = document.getElementById('minimap-canvas') as HTMLCanvasElement;
+
+const MINIMAP_RANGE = 200;
+
+const minimap = new Minimap({ canvas: minimapCanvas, range: MINIMAP_RANGE });
+const globalMap = new GlobalMap();
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -107,10 +119,17 @@ let oceanFloor: THREE.Mesh | undefined;
 
 let player: PlayerController | null = null;
 let playController: PlayModeController | null = null;
+let godPlayer: PlayerController | null = null;
+let godModeActive: boolean = false;
 let net: NetworkSync | null = null;
 let mainMenu: MainMenu;
 let playMenu: PlayMenu;
 let sandboxPanel: SandboxPanel;
+let spawnPanel: SpawnPanel;
+
+const spawnedShips: SpawnedShip[] = [];
+let drivenShip: SpawnedShip | null = null;
+let deckOffset: { x: number; z: number } = { x: 0, z: 0 };
 
 let gameState: GameState = 'menu';
 let escOpen = false;
@@ -139,6 +158,48 @@ function getRandomSpawnPosition(): { x: number; y: number; z: number } {
   const y = generator.getHeightAt(x, z) + 2;
   
   return { x, y, z };
+}
+
+function getWaterHeight(x: number, z: number, time: number): number {
+  const config = generator.config;
+  const baseHeight = config.waterHeight;
+  const waveHeight = config.waveHeight;
+  const waveSpeed = config.waveSpeed;
+
+  const gerstner = (
+    px: number, pz: number,
+    amplitude: number, wavelength: number, speed: number,
+    dirX: number, dirZ: number, steepness: number
+  ): number => {
+    const frequency = 2.0 / wavelength;
+    const phaseConstant = speed * 2.0 / wavelength;
+    const len = Math.sqrt(dirX * dirX + dirZ * dirZ);
+    dirX /= len; dirZ /= len;
+    const fi = time * waveSpeed * phaseConstant;
+    const dirDotPos = dirX * px + dirZ * pz;
+    return amplitude * Math.sin(frequency * dirDotPos + fi) * waveHeight;
+  };
+
+  const islands = generator.getIslands();
+  let closest = 1e6;
+  for (const isl of islands) {
+    const d = Math.sqrt((x - isl.x) ** 2 + (z - isl.z) ** 2) - isl.radius;
+    closest = Math.min(closest, d);
+  }
+  const calm = Math.max(0, Math.min(1, (closest - 1) / 8));
+  const nearshoreScale = 0.45 + 0.7 * calm;
+
+  const total = (
+    gerstner(x, z, 1.15, 64.0, 0.9, 1.0, 0.2, 0.34) +
+    gerstner(x, z, 0.82, 42.0, 0.8, -0.6, 1.0, 0.26) +
+    gerstner(x, z, 0.58, 27.0, 1.2, 0.8, -0.5, 0.20) +
+    gerstner(x, z, 0.48, 16.0, 1.6, -0.3, 0.7, 0.16) +
+    gerstner(x, z, 0.38, 10.0, 2.0, 0.6, 0.5, 0.12) +
+    gerstner(x, z, 0.26, 6.8, 2.4, -0.8, 0.3, 0.10) +
+    gerstner(x, z, 0.18, 4.2, 3.0, 0.4, -0.9, 0.08)
+  ) * 1.55 * nearshoreScale;
+
+  return baseHeight + total;
 }
 
 function initWorld(config: Partial<WorldConfig> = {}, resetPosition: boolean = true): void {
@@ -202,6 +263,18 @@ function initWorld(config: Partial<WorldConfig> = {}, resetPosition: boolean = t
     const spawn = generator.getSpawnPosition();
     camera.position.set(spawn.x, spawn.y + 10, spawn.z + 20);
   }
+
+  // Bake minimap terrain texture for the new world
+  minimap.bakeTexture(generator);
+  globalMap.bakeTexture(generator);
+  // Size the global map canvas to match its CSS container
+  const gmCanvas = document.getElementById('global-map-canvas') as HTMLCanvasElement;
+  if (gmCanvas) {
+    const panel = document.getElementById('global-map-panel')!;
+    const sz = panel.clientWidth || 600;
+    gmCanvas.width  = sz;
+    gmCanvas.height = sz;
+  }
 }
 
 function addDecorations(): void {
@@ -250,10 +323,10 @@ function addDecorations(): void {
 
 function startPlayMode(config: WorldConfig): void {
   gameState = 'playing';
+  godModeActive = false;
   playMenu.hide();
   hud.classList.remove('hidden');
   
-  // Show health/stamina bars in play mode
   const hudBars = document.getElementById('hud-bars');
   if (hudBars) hudBars.style.display = 'flex';
   
@@ -263,7 +336,17 @@ function startPlayMode(config: WorldConfig): void {
   playController = new PlayModeController(scene, camera, generator, spawnPos);
   playController.sensitivity = parseFloat((document.getElementById('sens-slider') as HTMLInputElement).value);
   
-  // Set up callbacks
+  playController.getShipDeckHeight = (x: number, z: number): number | null => {
+    let highestDeck: number | null = null;
+    for (const ship of spawnedShips) {
+      const deckY = getDeckHeightAt(ship, x, z);
+      if (deckY !== null && (highestDeck === null || deckY > highestDeck)) {
+        highestDeck = deckY;
+      }
+    }
+    return highestDeck;
+  };
+  
   playController.onHealthChange = (health) => {
     updateHealthBar(health);
   };
@@ -274,11 +357,91 @@ function startPlayMode(config: WorldConfig): void {
     showNotification('You fell into the water! Respawning...');
   };
   
-  // Initialize HUD bars
+  playController.onEnterBoat = () => {
+    const playerPos = playController?.getCharacterPosition();
+    if (!playerPos) return;
+    
+    for (const ship of spawnedShips) {
+      const deckY = getDeckHeightAt(ship, playerPos.x, playerPos.z);
+      if (deckY !== null) {
+        drivenShip = ship;
+
+        // Keep driver anchored at a stable helm point on the stern deck.
+        deckOffset.x = 1.8;
+        deckOffset.z = 0;
+
+        const shipPos = ship.body.position;
+        const shipRot = ship.body.rotation.y;
+        const cos = Math.cos(shipRot);
+        const sin = Math.sin(shipRot);
+        const helmX = shipPos.x + deckOffset.x * cos - deckOffset.z * sin;
+        const helmZ = shipPos.z + deckOffset.x * sin + deckOffset.z * cos;
+        const helmY = getDeckHeightAt(ship, helmX, helmZ) ?? deckY;
+        playController.setPosition(helmX, helmY, helmZ);
+        
+        playController?.setDrivingBoat(true);
+        showNotification('Driving boat! WASD to steer, E to exit');
+        break;
+      }
+    }
+  };
+  
+  playController.onExitBoat = () => {
+    if (drivenShip && playController) {
+      const shipPos = drivenShip.body.position;
+      const shipRot = drivenShip.body.rotation.y;
+      const cos = Math.cos(shipRot);
+      const sin = Math.sin(shipRot);
+      
+      const exitX = shipPos.x + deckOffset.x * cos - deckOffset.z * sin + 2;
+      const exitZ = shipPos.z + deckOffset.x * sin + deckOffset.z * cos;
+      const exitY = getDeckHeightAt(drivenShip, exitX, exitZ) ?? shipPos.y + 2;
+      
+      playController.setPosition(exitX, exitY, exitZ);
+      playController.setDrivingBoat(false);
+    }
+    drivenShip = null;
+    showNotification('Exited boat');
+  };
+  
+  playController.onBoatInput = (thrust: number, steering: number) => {
+    if (drivenShip) {
+      applyBoatInput(drivenShip.body, thrust, steering);
+    }
+  };
+  
   updateHealthBar(100);
   updateStaminaBar(100);
   
   setTimeout(() => playController?.requestPointerLock(), 100);
+}
+
+function toggleGodMode(): void {
+  if (gameState !== 'playing') return;
+  
+  godModeActive = !godModeActive;
+  
+  if (godModeActive) {
+    playController?.releasePointerLock();
+    
+    const currentPos = playController ? playController.getState().position : { x: camera.position.x, y: camera.position.y, z: camera.position.z };
+    if (!godPlayer) {
+      godPlayer = new PlayerController(scene, camera, 'god');
+      godPlayer.sensitivity = parseFloat((document.getElementById('sens-slider') as HTMLInputElement).value);
+      godPlayer.speed = parseInt((document.getElementById('speed-slider') as HTMLInputElement).value, 10);
+    }
+    camera.position.set(currentPos.x, currentPos.y + 15, currentPos.z + 10);
+    
+    godPlayer.requestPointerLock();
+    spawnPanel.show();
+    showNotification('God Mode ON - Press Y to exit');
+  } else {
+    godPlayer?.releasePointerLock();
+    spawnPanel.hide();
+    spawnPanel.toggleSpawnMode(false);
+    playController?.requestPointerLock();
+    showNotification('God Mode OFF');
+  }
 }
 
 function updateHealthBar(health: number): void {
@@ -315,13 +478,25 @@ mainMenu = new MainMenu({
     gameState = 'sandbox';
     mainMenu.hide();
     hud.classList.remove('hidden');
-    initWorld();
+    
+    const singleIslandConfig: Partial<WorldConfig> = {
+      islandCount: 1,
+      minIslandSize: 180,
+      maxIslandSize: 220,
+      noiseFrequency: 1.2,
+      noiseOctaves: 7,
+      worldSize: 600,
+      resolution: 200,
+      fogDensity: 0.003,
+    };
+    initWorld(singleIslandConfig);
     
     player = new PlayerController(scene, camera, 'god');
     player.sensitivity = parseFloat((document.getElementById('sens-slider') as HTMLInputElement).value);
     player.speed = parseInt((document.getElementById('speed-slider') as HTMLInputElement).value, 10);
     
     sandboxPanel.show();
+    spawnPanel.show();
   },
   onQuit: () => {
     mainMenu.hide();
@@ -349,6 +524,49 @@ sandboxPanel = new SandboxPanel({
   },
   onRandomSeed: () => Math.floor(Math.random() * 1000000),
 });
+
+spawnPanel = new SpawnPanel({
+  onSpawnShip: () => {
+    spawnPanel.toggleSpawnMode();
+  },
+  onSpawnModeChange: (active) => {
+    if (active) {
+      player?.releasePointerLock();
+      godPlayer?.releasePointerLock();
+    }
+  },
+});
+
+async function spawnShipAt(x: number, z: number): Promise<void> {
+  const { mesh, body } = await createShip();
+  const waterY = getWaterHeight(x, z, clock.getElapsedTime());
+  body.position.set(x, waterY + 1, z);
+  body.rotation.y = Math.random() * Math.PI * 2;
+  updateShipMesh(mesh, body);
+  scene.add(mesh);
+  spawnedShips.push({ mesh, body });
+  showNotification('Ship spawned! Click to place more.');
+}
+
+function raycastWater(event: MouseEvent): { hit: boolean; x: number; z: number } {
+  const rect = renderer.domElement.getBoundingClientRect();
+  const mouse = new THREE.Vector2(
+    ((event.clientX - rect.left) / rect.width) * 2 - 1,
+    -((event.clientY - rect.top) / rect.height) * 2 + 1
+  );
+
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(mouse, camera);
+
+  const waterPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -generator.config.waterHeight);
+  const intersection = new THREE.Vector3();
+  raycaster.ray.intersectPlane(waterPlane, intersection);
+
+  if (intersection) {
+    return { hit: true, x: intersection.x, z: intersection.z };
+  }
+  return { hit: false, x: 0, z: 0 };
+}
 
 function openEsc(): void {
   if (gameState === 'menu' || gameState === 'playmenu') return;
@@ -388,6 +606,11 @@ document.addEventListener('keydown', (e) => {
       return;
     }
     
+    if (godModeActive && gameState === 'playing') {
+      toggleGodMode();
+      return;
+    }
+    
     const isLocked = document.pointerLockElement === document.body;
     if (isLocked) {
       e.preventDefault();
@@ -397,15 +620,67 @@ document.addEventListener('keydown', (e) => {
     
     e.preventDefault();
     escOpen ? closeEsc() : openEsc();
+    return;
   }
 
   if (e.code === 'KeyG' && gameState === 'sandbox') {
     sandboxPanel.toggle();
+    return;
   }
-});
 
-document.getElementById('canvas-container')!.addEventListener('click', () => {
-  if (!escOpen && gameState === 'playing') {
+  if (e.code === 'KeyY') {
+    if (gameState === 'playing') {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleGodMode();
+    }
+    return;
+  }
+
+  if (e.code === 'KeyP') {
+    if (gameState === 'sandbox' || (gameState === 'playing' && godModeActive)) {
+      spawnPanel.toggle();
+    }
+  }
+
+  if (e.code === 'KeyM') {
+    if (gameState === 'playing' || gameState === 'sandbox') {
+      e.preventDefault();
+        globalMap.toggle();
+      if (globalMap.isVisible) {
+        globalMap.resetPan();
+        // Release pointer lock so mouse can interact with the map
+        player?.releasePointerLock();
+        playController?.releasePointerLock();
+        godPlayer?.releasePointerLock();
+        // Resize canvas and draw immediately
+        const gmCanvas = document.getElementById('global-map-canvas') as HTMLCanvasElement;
+        const panel    = document.getElementById('global-map-panel')!;
+        const sz = panel.clientWidth;
+        if (sz > 0) { gmCanvas.width = sz; gmCanvas.height = sz; }
+        _redrawGlobalMap();
+      } else {
+        // Re-lock on close
+        setTimeout(() => {
+          if (gameState === 'playing' && !godModeActive) playController?.requestPointerLock();
+          else if (gameState === 'playing' && godModeActive) godPlayer?.requestPointerLock();
+          else player?.requestPointerLock();
+        }, 80);
+      }
+    }
+  }
+}, true);
+
+document.getElementById('canvas-container')!.addEventListener('click', (e) => {
+  const canSpawn = (gameState === 'sandbox') || (gameState === 'playing' && godModeActive);
+  if (spawnPanel.isSpawnModeActive() && canSpawn) {
+    const result = raycastWater(e as MouseEvent);
+    if (result.hit) {
+      spawnShipAt(result.x, result.z);
+    }
+    return;
+  }
+  if (!escOpen && gameState === 'playing' && !godModeActive) {
     playController?.requestPointerLock();
   }
 });
@@ -501,9 +776,14 @@ function refreshEscPlayers(): void {
 
 let hudTick = 0;
 function updateHUD(): void {
-  if (gameState === 'playing' && playController) {
-    const state = playController.getState();
-    hudPos.textContent = `${state.position.x.toFixed(1)}, ${state.position.y.toFixed(1)}, ${state.position.z.toFixed(1)}`;
+  if (gameState === 'playing') {
+    if (godModeActive) {
+      const p = camera.position;
+      hudPos.textContent = `${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)} [GOD]`;
+    } else if (playController) {
+      const state = playController.getState();
+      hudPos.textContent = `${state.position.x.toFixed(1)}, ${state.position.y.toFixed(1)}, ${state.position.z.toFixed(1)}`;
+    }
   } else if (player) {
     const p = camera.position;
     hudPos.textContent = `${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}`;
@@ -524,6 +804,58 @@ function updateHUD(): void {
   }
   
   hudTick++;
+}
+
+function _redrawGlobalMap(): void {
+  if (!globalMap.isVisible) return;
+  const playerPos = playController?.getCharacterPosition()
+    ?? (player ? camera.position : null)
+    ?? camera.position;
+  const playerYaw = godModeActive
+    ? (godPlayer?.yaw ?? 0)
+    : playController
+      ? playController.yaw
+      : (player?.yaw ?? 0);
+  const remotes = (net && gameState === 'playing') ? net.getRemotePlayers() : [];
+  globalMap.draw(
+    playerPos.x,
+    playerPos.z,
+    playerYaw,
+    spawnedShips,
+    drivenShip,
+    remotes,
+  );
+}
+
+function updateMinimap(): void {
+  if (!minimapEl) return;
+
+  const show = gameState === 'playing' || gameState === 'sandbox';
+  minimapEl.classList.toggle('hidden', !show);
+
+  if (!show) return;
+
+  const playerPos = playController?.getCharacterPosition()
+    ?? (player ? camera.position : null)
+    ?? camera.position;
+
+  // Derive yaw from the active controller (yaw=0 → looking toward -Z / north)
+  const playerYaw = godModeActive
+    ? (godPlayer?.yaw ?? 0)
+    : playController
+      ? playController.yaw
+      : (player?.yaw ?? 0);
+
+  const remotes = (net && gameState === 'playing') ? net.getRemotePlayers() : [];
+
+  minimap.update(
+    playerPos.x,
+    playerPos.z,
+    playerYaw,
+    spawnedShips,
+    drivenShip,
+    remotes,
+  );
 }
 
 window.addEventListener('resize', () => {
@@ -596,23 +928,45 @@ function animate(): void {
   }
 
   if (!escOpen && gameState !== 'menu' && gameState !== 'playmenu') {
-    if (gameState === 'playing' && playController) {
-      playController.update(dt);
+    if (gameState === 'playing') {
+      if (godModeActive && godPlayer) {
+        godPlayer.update(dt);
+      } else if (playController) {
+        playController.update(dt);
+      }
     } else if (player) {
       player.update(dt);
     }
 
-    if (gameState === 'playing' && net) {
+    if (gameState === 'playing' && net && playController && !godModeActive) {
       sendThrottle += dt;
       if (sendThrottle >= 0.05) {
         sendThrottle = 0;
-        const state = playController!.getState();
+        const state = playController.getState();
         net.sendMove(state.position, state.rotation);
       }
       net.interpolate();
     }
 
+    for (const ship of spawnedShips) {
+      updateBuoyancy(ship.body, getWaterHeight, time, dt);
+      updateShipMesh(ship.mesh, ship.body);
+    }
+
+    if (drivenShip && playController && playController.isDrivingBoat()) {
+      const shipPos = drivenShip.body.position;
+      const shipRot = drivenShip.body.rotation.y;
+      const cos = Math.cos(shipRot);
+      const sin = Math.sin(shipRot);
+      const anchorX = shipPos.x + deckOffset.x * cos - deckOffset.z * sin;
+      const anchorZ = shipPos.z + deckOffset.x * sin + deckOffset.z * cos;
+      const anchorY = getDeckHeightAt(drivenShip, anchorX, anchorZ) ?? (shipPos.y + 1.5);
+      playController.attachToShip(shipPos, shipRot, deckOffset, anchorY);
+    }
+
     updateHUD();
+    updateMinimap();
+    _redrawGlobalMap();
   }
 
   renderer.render(scene, camera);

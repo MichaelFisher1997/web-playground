@@ -58,6 +58,15 @@ export class PlayModeController {
   onWaterDeath: (() => void) | null = null;
   onHealthChange: ((health: number) => void) | null = null;
   onStaminaChange: ((stamina: number) => void) | null = null;
+  getShipDeckHeight: ((x: number, z: number) => number | null) | null = null;
+  onEnterBoat: (() => void) | null = null;
+  onExitBoat: (() => void) | null = null;
+  onBoatInput: ((thrust: number, steering: number) => void) | null = null;
+
+  private _standingOnShip: boolean = false;
+  private _shipVelocity: THREE.Vector3 = new THREE.Vector3();
+  private _isDrivingBoat: boolean = false;
+  private _driveCooldown: number = 0;
 
   constructor(
     scene: THREE.Scene,
@@ -230,6 +239,11 @@ export class PlayModeController {
     if (this._pointerLocked) document.exitPointerLock();
   }
 
+  setVisible(visible: boolean): void {
+    this._characterMesh.visible = visible && !this._isFirstPerson;
+    this._firstPersonGun.visible = visible && this._isFirstPerson;
+  }
+
   private _forwardDir(): THREE.Vector3 {
     return new THREE.Vector3(
       Math.sin(this.yaw) * Math.cos(this.pitch),
@@ -362,11 +376,23 @@ export class PlayModeController {
     return this.worldGenerator.getHeightAt(x, z);
   }
 
-  private _checkGroundCollision(): { isGrounded: boolean; height: number } {
+  private _checkGroundCollision(): { isGrounded: boolean; height: number; isShip: boolean } {
     const pos = this._characterMesh.position;
     const groundHeight = this._getTerrainHeightAt(pos.x, pos.z);
-    const isGrounded = pos.y <= groundHeight + 0.45 && this._velocity.y <= 1.0;
-    return { isGrounded, height: groundHeight };
+    
+    let surfaceHeight = groundHeight;
+    let isShip = false;
+    
+    if (this.getShipDeckHeight) {
+      const shipDeckHeight = this.getShipDeckHeight(pos.x, pos.z);
+      if (shipDeckHeight !== null && shipDeckHeight > groundHeight) {
+        surfaceHeight = shipDeckHeight;
+        isShip = true;
+      }
+    }
+    
+    const isGrounded = pos.y <= surfaceHeight + 0.45 && this._velocity.y <= 1.0;
+    return { isGrounded, height: surfaceHeight, isShip };
   }
 
   private _applyFallDamage(fallDistance: number): void {
@@ -402,16 +428,69 @@ export class PlayModeController {
     const keys = this._keys;
 
     if (this._jumpCooldownTimer > 0) this._jumpCooldownTimer -= dt;
-
-    const ground = this._checkGroundCollision();
-    this._isGrounded = ground.isGrounded;
+    if (this._driveCooldown > 0) this._driveCooldown -= dt;
 
     const waterHeight = this.worldGenerator.config.waterHeight;
-    if (this._characterMesh.position.y < waterHeight - 2) {
-      this.onWaterDeath?.();
-      this._respawn();
+    const playerY = this._characterMesh.position.y;
+    const isInWater = playerY < waterHeight + 0.5;
+
+    let deckHeight: number | null = null;
+    if (this.getShipDeckHeight) {
+      deckHeight = this.getShipDeckHeight(this._characterMesh.position.x, this._characterMesh.position.z);
+    }
+    
+    this._standingOnShip = deckHeight !== null && playerY <= deckHeight + 1.5;
+
+    if (this._isDrivingBoat) {
+      let thrust = 0;
+      let steering = 0;
+      
+      if (keys['KeyW'] || keys['ArrowUp']) thrust = 1;
+      if (keys['KeyS'] || keys['ArrowDown']) thrust = -1;
+      if (keys['KeyA'] || keys['ArrowLeft']) steering = 1;
+      if (keys['KeyD'] || keys['ArrowRight']) steering = -1;
+      
+      this.onBoatInput?.(thrust, steering);
+      
+      if (keys['KeyE'] && this._driveCooldown <= 0) {
+        this.onExitBoat?.();
+        this._isDrivingBoat = false;
+        this._driveCooldown = 0.3;
+      }
+      
+      this._updateCameraPosition();
       return;
     }
+
+    if (keys['KeyE'] && this._standingOnShip && this._driveCooldown <= 0) {
+      this.onEnterBoat?.();
+      this._driveCooldown = 0.3;
+    }
+    
+    if (isInWater && !this._standingOnShip) {
+      const targetY = waterHeight + 0.3;
+      const buoyancy = (targetY - playerY) * 5.0;
+      this._velocity.y += buoyancy * dt;
+      this._velocity.y *= 0.95;
+      this._velocity.x *= 0.92;
+      this._velocity.z *= 0.92;
+      
+      if (keys['Space']) {
+        this._velocity.y = Math.max(this._velocity.y, 3.0);
+      }
+      if (keys['KeyQ'] || keys['ControlLeft'] || keys['ControlRight']) {
+        this._velocity.y -= 3.0 * dt;
+      }
+      
+      if (playerY < waterHeight - 8) {
+        this.onWaterDeath?.();
+        this._respawn();
+        return;
+      }
+    }
+
+    const ground = this._checkGroundCollision();
+    this._isGrounded = ground.isGrounded || this._standingOnShip;
 
     if (!this._wasGrounded && this._isGrounded) {
       const fallDistance = Math.max(0, this._fallStartY - this._characterMesh.position.y);
@@ -456,7 +535,7 @@ export class PlayModeController {
       this._velocity.z *= 0.8;
     }
 
-    if (keys['Space'] && this._isGrounded && this._jumpCooldownTimer <= 0 && this.stamina >= JUMP_STAMINA_COST) {
+    if (keys['Space'] && this._isGrounded && this._jumpCooldownTimer <= 0 && this.stamina >= JUMP_STAMINA_COST && !isInWater) {
       this._velocity.y = JUMP_FORCE;
       this._jumpCooldownTimer = JUMP_COOLDOWN;
       this._isGrounded = false;
@@ -465,15 +544,28 @@ export class PlayModeController {
       this.onStaminaChange?.(this.stamina);
     }
 
-    this._velocity.y -= GRAVITY * dt;
+    if (!isInWater || this._standingOnShip) {
+      this._velocity.y -= GRAVITY * dt;
+    }
 
     const next = this._characterMesh.position.clone();
     next.addScaledVector(this._velocity, dt);
 
-    const nextGround = this._getTerrainHeightAt(next.x, next.z);
-    if (next.y < nextGround + PLAYER_HEIGHT * 0.1) {
-      next.y = nextGround + PLAYER_HEIGHT * 0.1;
+    const terrainHeight = this._getTerrainHeightAt(next.x, next.z);
+    let surfaceHeight = terrainHeight;
+    
+    if (this.getShipDeckHeight) {
+      const shipDeck = this.getShipDeckHeight(next.x, next.z);
+      if (shipDeck !== null && shipDeck > surfaceHeight) {
+        surfaceHeight = shipDeck;
+        this._standingOnShip = true;
+      }
+    }
+    
+    if (next.y < surfaceHeight + PLAYER_HEIGHT * 0.1) {
+      next.y = surfaceHeight + PLAYER_HEIGHT * 0.1;
       this._velocity.y = Math.max(0, this._velocity.y);
+      this._isGrounded = true;
     }
 
     this._characterMesh.position.copy(next);
@@ -507,6 +599,42 @@ export class PlayModeController {
 
   isGrounded(): boolean {
     return this._isGrounded;
+  }
+
+  isDrivingBoat(): boolean {
+    return this._isDrivingBoat;
+  }
+
+  setDrivingBoat(driving: boolean): void {
+    this._isDrivingBoat = driving;
+    this._driveCooldown = 0.3;
+  }
+
+  isOnShip(): boolean {
+    return this._standingOnShip;
+  }
+
+  attachToShip(
+    shipPosition: THREE.Vector3,
+    shipRotation: number,
+    deckOffset: { x: number; z: number },
+    deckY?: number,
+  ): void {
+    const cos = Math.cos(shipRotation);
+    const sin = Math.sin(shipRotation);
+    const worldX = shipPosition.x + deckOffset.x * cos - deckOffset.z * sin;
+    const worldZ = shipPosition.z + deckOffset.x * sin + deckOffset.z * cos;
+    
+    this._characterMesh.position.x = worldX;
+    this._characterMesh.position.z = worldZ;
+    if (deckY !== undefined) {
+      this._characterMesh.position.y = deckY;
+    }
+    this._characterMesh.rotation.y = shipRotation;
+    
+    this._velocity.set(0, 0, 0);
+    
+    this._updateCameraPosition();
   }
 
   destroy(): void {
