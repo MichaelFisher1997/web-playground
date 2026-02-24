@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { type WorldConfig } from './world/generator.js';
 import { updateWater, setWaterParams } from './world/water.js';
 import { PlayerController } from './player/controller.js';
-import { PlayModeController, type PlayControllerCallbacks } from './player/play-controller.js';
+import { PlayModeController } from './player/play-controller.js';
 import { NetworkSync } from './network/sync.js';
 import { MainMenu } from './ui/menu.js';
 import { PlayMenu } from './ui/play-menu.js';
@@ -10,13 +10,13 @@ import { SandboxPanel } from './ui/sandbox-panel.js';
 import { SpawnPanel } from './ui/spawn-panel.js';
 import { Minimap } from './ui/minimap.js';
 import { GlobalMap } from './ui/global-map.js';
-import { createShip, updateShipMesh, SpawnedShip, getDeckHeightAt } from './objects/ship.js';
-import { updateBuoyancy, WaterHeightFn, applyBoatInput } from './physics/buoyancy.js';
+import { SpawnedShip } from './objects/ship.js';
 import { WorldManager } from './core/world-manager.js';
 import { GameInputManager } from './input/game-input-manager.js';
 import { UIRuntimeManager } from './core/ui-runtime-manager.js';
 import { GameLoop } from './core/game-loop.js';
-import { startPlayMode as runPlayMode, startSandboxMode, toggleGodMode as runToggleGodMode } from './core/mode-manager.js';
+import { ModeManager } from './core/mode-manager.js';
+import { ShipSystem } from './systems/ship-system.js';
 
 type GameState = 'menu' | 'playmenu' | 'sandbox' | 'playing' | 'paused';
 
@@ -33,8 +33,6 @@ interface RuntimeState {
   godModeActive: boolean;
   escOpen: boolean;
   playerName: string;
-  drivenShip: SpawnedShip | null;
-  deckOffset: { x: number; z: number };
 }
 
 const loadingEl = document.getElementById('loading')!;
@@ -148,11 +146,8 @@ const state: RuntimeState = {
   godModeActive: false,
   escOpen: false,
   playerName: '',
-  drivenShip: null,
-  deckOffset: { x: 0, z: 0 },
 };
 
-const spawnedShips: SpawnedShip[] = [];
 let gameLoop: GameLoop;
 
 function showNotification(text: string): void {
@@ -167,6 +162,9 @@ function getWaterHeight(x: number, z: number, time: number): number {
   return worldManager.getWaterHeight(x, z, time);
 }
 
+const shipSystem = new ShipSystem(scene, getWaterHeight);
+let modeManager: ModeManager;
+
 function initWorld(config: Partial<WorldConfig> = {}, resetPosition: boolean = true): void {
   worldManager.initWorld(config, resetPosition);
   const gmCanvas = document.getElementById('global-map-canvas') as HTMLCanvasElement;
@@ -179,51 +177,11 @@ function initWorld(config: Partial<WorldConfig> = {}, resetPosition: boolean = t
 }
 
 function startPlayMode(config: WorldConfig): void {
-  runPlayMode({
-    state,
-    scene,
-    camera,
-    hud,
-    worldManager,
-    spawnedShips,
-    initWorld,
-    hidePlayMenu: () => state.playMenu?.hide(),
-    showSpawnPanel: () => state.spawnPanel?.show(),
-    hideSpawnPanel: () => state.spawnPanel?.hide(),
-    disableSpawnMode: () => state.spawnPanel?.toggleSpawnMode(false),
-    showSandboxPanel: () => state.sandboxPanel?.show(),
-    showNotification,
-    updateHealthBar,
-    updateStaminaBar,
-    getSensitivity: () => parseFloat((document.getElementById('sens-slider') as HTMLInputElement).value),
-    getSpeed: () => parseInt((document.getElementById('speed-slider') as HTMLInputElement).value, 10),
-    getDeckHeightAt,
-    applyBoatInput,
-  }, config);
+  modeManager.startPlayMode(config);
 }
 
 function toggleGodMode(): void {
-  runToggleGodMode({
-    state,
-    scene,
-    camera,
-    hud,
-    worldManager,
-    spawnedShips,
-    initWorld,
-    hidePlayMenu: () => state.playMenu?.hide(),
-    showSpawnPanel: () => state.spawnPanel?.show(),
-    hideSpawnPanel: () => state.spawnPanel?.hide(),
-    disableSpawnMode: () => state.spawnPanel?.toggleSpawnMode(false),
-    showSandboxPanel: () => state.sandboxPanel?.show(),
-    showNotification,
-    updateHealthBar,
-    updateStaminaBar,
-    getSensitivity: () => parseFloat((document.getElementById('sens-slider') as HTMLInputElement).value),
-    getSpeed: () => parseInt((document.getElementById('speed-slider') as HTMLInputElement).value, 10),
-    getDeckHeightAt,
-    applyBoatInput,
-  });
+  modeManager.toggleGodMode();
 }
 
 function updateHealthBar(health: number): void {
@@ -249,6 +207,26 @@ function updateStaminaBar(stamina: number): void {
   }
 }
 
+modeManager = new ModeManager({
+  state,
+  scene,
+  camera,
+  hud,
+  worldManager,
+  shipSystem,
+  initWorld,
+  hidePlayMenu: () => state.playMenu?.hide(),
+  showSpawnPanel: () => state.spawnPanel?.show(),
+  hideSpawnPanel: () => state.spawnPanel?.hide(),
+  disableSpawnMode: () => state.spawnPanel?.toggleSpawnMode(false),
+  showSandboxPanel: () => state.sandboxPanel?.show(),
+  showNotification,
+  updateHealthBar,
+  updateStaminaBar,
+  getSensitivity: () => parseFloat((document.getElementById('sens-slider') as HTMLInputElement).value),
+  getSpeed: () => parseInt((document.getElementById('speed-slider') as HTMLInputElement).value, 10),
+});
+
 state.mainMenu = new MainMenu({
   onPlay: () => {},
   onPlayMenu: () => {
@@ -258,27 +236,7 @@ state.mainMenu = new MainMenu({
   },
   onSandbox: () => {
     state.mainMenu?.hide();
-    startSandboxMode({
-      state,
-      scene,
-      camera,
-      hud,
-      worldManager,
-      spawnedShips,
-      initWorld,
-      hidePlayMenu: () => state.playMenu?.hide(),
-      showSpawnPanel: () => state.spawnPanel?.show(),
-      hideSpawnPanel: () => state.spawnPanel?.hide(),
-      disableSpawnMode: () => state.spawnPanel?.toggleSpawnMode(false),
-      showSandboxPanel: () => state.sandboxPanel?.show(),
-      showNotification,
-      updateHealthBar,
-      updateStaminaBar,
-      getSensitivity: () => parseFloat((document.getElementById('sens-slider') as HTMLInputElement).value),
-      getSpeed: () => parseInt((document.getElementById('speed-slider') as HTMLInputElement).value, 10),
-      getDeckHeightAt,
-      applyBoatInput,
-    });
+    modeManager.startSandboxMode();
   },
   onQuit: () => {
     state.mainMenu?.hide();
@@ -320,13 +278,7 @@ state.spawnPanel = new SpawnPanel({
 });
 
 async function spawnShipAt(x: number, z: number): Promise<void> {
-  const { mesh, body } = await createShip();
-  const waterY = getWaterHeight(x, z, gameLoop.getElapsedTime());
-  body.position.set(x, waterY + 1, z);
-  body.rotation.y = Math.random() * Math.PI * 2;
-  updateShipMesh(mesh, body);
-  scene.add(mesh);
-  spawnedShips.push({ mesh, body });
+  await shipSystem.spawnShipAt(x, z, gameLoop.getElapsedTime());
   showNotification('Ship spawned! Click to place more.');
 }
 
@@ -383,8 +335,8 @@ const uiRuntime = new UIRuntimeManager({
   getPlayerController: () => state.player,
   getPlayController: () => state.playController,
   getGodPlayer: () => state.godPlayer,
-  getSpawnedShips: () => spawnedShips,
-  getDrivenShip: () => state.drivenShip,
+  getSpawnedShips: () => shipSystem.getShips(),
+  getDrivenShip: () => shipSystem.getDrivenShip(),
 });
 
 const inputManager = new GameInputManager({
@@ -566,20 +518,10 @@ gameLoop = new GameLoop({
         state.net.interpolate();
       }
 
-      for (const ship of spawnedShips) {
-        updateBuoyancy(ship.body, getWaterHeight, time, dt);
-        updateShipMesh(ship.mesh, ship.body);
-      }
+      shipSystem.update(time, dt);
 
-      if (state.drivenShip && state.playController && state.playController.isDrivingBoat()) {
-        const shipPos = state.drivenShip.body.position;
-        const shipRot = state.drivenShip.body.rotation.y;
-        const cos = Math.cos(shipRot);
-        const sin = Math.sin(shipRot);
-        const anchorX = shipPos.x + state.deckOffset.x * cos - state.deckOffset.z * sin;
-        const anchorZ = shipPos.z + state.deckOffset.x * sin + state.deckOffset.z * cos;
-        const anchorY = getDeckHeightAt(state.drivenShip, anchorX, anchorZ) ?? (shipPos.y + 1.5);
-        state.playController.attachToShip(shipPos, shipRot, state.deckOffset, anchorY);
+      if (state.playController) {
+        shipSystem.attachDrivenPlayer(state.playController);
       }
 
       updateHUD();
