@@ -19,6 +19,23 @@ import { GameLoop } from './core/game-loop.js';
 
 type GameState = 'menu' | 'playmenu' | 'sandbox' | 'playing' | 'paused';
 
+interface RuntimeState {
+  player: PlayerController | null;
+  playController: PlayModeController | null;
+  godPlayer: PlayerController | null;
+  net: NetworkSync | null;
+  mainMenu: MainMenu | null;
+  playMenu: PlayMenu | null;
+  sandboxPanel: SandboxPanel | null;
+  spawnPanel: SpawnPanel | null;
+  gameState: GameState;
+  godModeActive: boolean;
+  escOpen: boolean;
+  playerName: string;
+  drivenShip: SpawnedShip | null;
+  deckOffset: { x: number; z: number };
+}
+
 const loadingEl = document.getElementById('loading')!;
 const hud = document.getElementById('hud')!;
 const hudPos = document.getElementById('hud-pos')!;
@@ -117,24 +134,24 @@ scene.add(sun);
 
 const worldManager = new WorldManager(scene, camera, skyMat, minimap, globalMap);
 
-let player: PlayerController | null = null;
-let playController: PlayModeController | null = null;
-let godPlayer: PlayerController | null = null;
-let godModeActive: boolean = false;
-let net: NetworkSync | null = null;
-let mainMenu: MainMenu;
-let playMenu: PlayMenu;
-let sandboxPanel: SandboxPanel;
-let spawnPanel: SpawnPanel;
+const state: RuntimeState = {
+  player: null,
+  playController: null,
+  godPlayer: null,
+  net: null,
+  mainMenu: null,
+  playMenu: null,
+  sandboxPanel: null,
+  spawnPanel: null,
+  gameState: 'menu',
+  godModeActive: false,
+  escOpen: false,
+  playerName: '',
+  drivenShip: null,
+  deckOffset: { x: 0, z: 0 },
+};
 
 const spawnedShips: SpawnedShip[] = [];
-let drivenShip: SpawnedShip | null = null;
-let deckOffset: { x: number; z: number } = { x: 0, z: 0 };
-
-let gameState: GameState = 'menu';
-let escOpen = false;
-let escRequestedWhileLocked = false;
-let playerName = '';
 let gameLoop: GameLoop;
 
 function showNotification(text: string): void {
@@ -161,9 +178,9 @@ function initWorld(config: Partial<WorldConfig> = {}, resetPosition: boolean = t
 }
 
 function startPlayMode(config: WorldConfig): void {
-  gameState = 'playing';
-  godModeActive = false;
-  playMenu.hide();
+  state.gameState = 'playing';
+  state.godModeActive = false;
+  state.playMenu?.hide();
   hud.classList.remove('hidden');
   
   const hudBars = document.getElementById('hud-bars');
@@ -193,82 +210,82 @@ function startPlayMode(config: WorldConfig): void {
       showNotification('You fell into the water! Respawning...');
     },
     onEnterBoat: () => {
-      const playerPos = playController?.getCharacterPosition();
+      const playerPos = state.playController?.getCharacterPosition();
       if (!playerPos) return;
       for (const ship of spawnedShips) {
         const deckY = getDeckHeightAt(ship, playerPos.x, playerPos.z);
         if (deckY !== null) {
-          drivenShip = ship;
-          deckOffset.x = 1.8;
-          deckOffset.z = 0;
+          state.drivenShip = ship;
+          state.deckOffset.x = 1.8;
+          state.deckOffset.z = 0;
           const shipPos = ship.body.position;
           const shipRot = ship.body.rotation.y;
           const cos = Math.cos(shipRot);
           const sin = Math.sin(shipRot);
-          const helmX = shipPos.x + deckOffset.x * cos - deckOffset.z * sin;
-          const helmZ = shipPos.z + deckOffset.x * sin + deckOffset.z * cos;
+          const helmX = shipPos.x + state.deckOffset.x * cos - state.deckOffset.z * sin;
+          const helmZ = shipPos.z + state.deckOffset.x * sin + state.deckOffset.z * cos;
           const helmY = getDeckHeightAt(ship, helmX, helmZ) ?? deckY;
-          playController?.setPosition(helmX, helmY, helmZ);
-          playController?.setDrivingBoat(true);
+          state.playController?.setPosition(helmX, helmY, helmZ);
+          state.playController?.setDrivingBoat(true);
           showNotification('Driving boat! WASD to steer, E to exit');
           break;
         }
       }
     },
     onExitBoat: () => {
-      if (drivenShip && playController) {
-        const shipPos = drivenShip.body.position;
-        const shipRot = drivenShip.body.rotation.y;
+      if (state.drivenShip && state.playController) {
+        const shipPos = state.drivenShip.body.position;
+        const shipRot = state.drivenShip.body.rotation.y;
         const cos = Math.cos(shipRot);
         const sin = Math.sin(shipRot);
-        const exitX = shipPos.x + deckOffset.x * cos - deckOffset.z * sin + 2;
-        const exitZ = shipPos.z + deckOffset.x * sin + deckOffset.z * cos;
-        const exitY = getDeckHeightAt(drivenShip, exitX, exitZ) ?? shipPos.y + 2;
-        playController.setPosition(exitX, exitY, exitZ);
-        playController.setDrivingBoat(false);
+        const exitX = shipPos.x + state.deckOffset.x * cos - state.deckOffset.z * sin + 2;
+        const exitZ = shipPos.z + state.deckOffset.x * sin + state.deckOffset.z * cos;
+        const exitY = getDeckHeightAt(state.drivenShip, exitX, exitZ) ?? shipPos.y + 2;
+        state.playController.setPosition(exitX, exitY, exitZ);
+        state.playController.setDrivingBoat(false);
       }
-      drivenShip = null;
+      state.drivenShip = null;
       showNotification('Exited boat');
     },
     onBoatInput: (thrust: number, steering: number) => {
-      if (drivenShip) {
-        applyBoatInput(drivenShip.body, thrust, steering);
+      if (state.drivenShip) {
+        applyBoatInput(state.drivenShip.body, thrust, steering);
       }
     },
   };
-  playController = new PlayModeController(scene, camera, worldManager.generator, spawnPos, callbacks);
-  playController.sensitivity = parseFloat((document.getElementById('sens-slider') as HTMLInputElement).value);
+  state.playController = new PlayModeController(scene, camera, worldManager.generator, spawnPos, callbacks);
+  state.playController.sensitivity = parseFloat((document.getElementById('sens-slider') as HTMLInputElement).value);
   
   updateHealthBar(100);
   updateStaminaBar(100);
   
-  setTimeout(() => playController?.requestPointerLock(), 100);
+  setTimeout(() => state.playController?.requestPointerLock(), 100);
 }
 
 function toggleGodMode(): void {
-  if (gameState !== 'playing') return;
+  if (state.gameState !== 'playing') return;
   
-  godModeActive = !godModeActive;
+  state.godModeActive = !state.godModeActive;
   
-  if (godModeActive) {
-    playController?.releasePointerLock();
+  if (state.godModeActive) {
+    state.playController?.releasePointerLock();
     
-    const currentPos = playController ? playController.getState().position : { x: camera.position.x, y: camera.position.y, z: camera.position.z };
-    if (!godPlayer) {
-      godPlayer = new PlayerController(scene, camera, 'god');
-      godPlayer.sensitivity = parseFloat((document.getElementById('sens-slider') as HTMLInputElement).value);
-      godPlayer.speed = parseInt((document.getElementById('speed-slider') as HTMLInputElement).value, 10);
+    const currentPos = state.playController ? state.playController.getState().position : { x: camera.position.x, y: camera.position.y, z: camera.position.z };
+    if (!state.godPlayer) {
+      state.godPlayer = new PlayerController(scene, camera, 'god');
+      state.godPlayer.sensitivity = parseFloat((document.getElementById('sens-slider') as HTMLInputElement).value);
+      state.godPlayer.speed = parseInt((document.getElementById('speed-slider') as HTMLInputElement).value, 10);
     }
     camera.position.set(currentPos.x, currentPos.y + 15, currentPos.z + 10);
     
-    godPlayer.requestPointerLock();
-    spawnPanel.show();
+    state.godPlayer.requestPointerLock();
+    state.spawnPanel?.show();
     showNotification('God Mode ON - Press Y to exit');
   } else {
-    godPlayer?.releasePointerLock();
-    spawnPanel.hide();
-    spawnPanel.toggleSpawnMode(false);
-    playController?.requestPointerLock();
+    state.godPlayer?.releasePointerLock();
+    state.spawnPanel?.hide();
+    state.spawnPanel?.toggleSpawnMode(false);
+    state.playController?.requestPointerLock();
     showNotification('God Mode OFF');
   }
 }
@@ -296,16 +313,16 @@ function updateStaminaBar(stamina: number): void {
   }
 }
 
-mainMenu = new MainMenu({
+state.mainMenu = new MainMenu({
   onPlay: () => {},
   onPlayMenu: () => {
-    gameState = 'playmenu';
-    mainMenu.hide();
-    playMenu.show();
+    state.gameState = 'playmenu';
+    state.mainMenu?.hide();
+    state.playMenu?.show();
   },
   onSandbox: () => {
-    gameState = 'sandbox';
-    mainMenu.hide();
+    state.gameState = 'sandbox';
+    state.mainMenu?.hide();
     hud.classList.remove('hidden');
     
     const singleIslandConfig: Partial<WorldConfig> = {
@@ -320,48 +337,48 @@ mainMenu = new MainMenu({
     };
     initWorld(singleIslandConfig);
     
-    player = new PlayerController(scene, camera, 'god');
-    player.sensitivity = parseFloat((document.getElementById('sens-slider') as HTMLInputElement).value);
-    player.speed = parseInt((document.getElementById('speed-slider') as HTMLInputElement).value, 10);
+    state.player = new PlayerController(scene, camera, 'god');
+    state.player.sensitivity = parseFloat((document.getElementById('sens-slider') as HTMLInputElement).value);
+    state.player.speed = parseInt((document.getElementById('speed-slider') as HTMLInputElement).value, 10);
     
-    sandboxPanel.show();
-    spawnPanel.show();
+    state.sandboxPanel?.show();
+    state.spawnPanel?.show();
   },
   onQuit: () => {
-    mainMenu.hide();
+    state.mainMenu?.hide();
     showNotification('Thanks for playing!');
   },
 });
 
-playMenu = new PlayMenu({
+state.playMenu = new PlayMenu({
   onStart: (config) => {
     startPlayMode(config);
   },
   onBack: () => {
-    gameState = 'menu';
-    playMenu.hide();
-    mainMenu.show();
+    state.gameState = 'menu';
+    state.playMenu?.hide();
+    state.mainMenu?.show();
     // Hide HUD bars when going back to menu
     const hudBars = document.getElementById('hud-bars');
     if (hudBars) hudBars.style.display = 'none';
   },
 });
 
-sandboxPanel = new SandboxPanel({
+state.sandboxPanel = new SandboxPanel({
   onGenerate: (config) => {
     initWorld(config, false);
   },
   onRandomSeed: () => Math.floor(Math.random() * 1000000),
 });
 
-spawnPanel = new SpawnPanel({
+state.spawnPanel = new SpawnPanel({
   onSpawnShip: () => {
-    spawnPanel.toggleSpawnMode();
+    state.spawnPanel?.toggleSpawnMode();
   },
   onSpawnModeChange: (active) => {
     if (active) {
-      player?.releasePointerLock();
-      godPlayer?.releasePointerLock();
+      state.player?.releasePointerLock();
+      state.godPlayer?.releasePointerLock();
     }
   },
 });
@@ -398,20 +415,20 @@ function raycastWater(event: MouseEvent): { hit: boolean; x: number; z: number }
 }
 
 function openEsc(): void {
-  if (gameState === 'menu' || gameState === 'playmenu') return;
-  escOpen = true;
+  if (state.gameState === 'menu' || state.gameState === 'playmenu') return;
+  state.escOpen = true;
   escMenu.classList.add('open');
-  player?.releasePointerLock();
-  playController?.releasePointerLock();
+  state.player?.releasePointerLock();
+  state.playController?.releasePointerLock();
   refreshEscPlayers();
 }
 
 function closeEsc(): void {
-  escOpen = false;
+  state.escOpen = false;
   escMenu.classList.remove('open');
   setTimeout(() => {
-    player?.requestPointerLock();
-    playController?.requestPointerLock();
+    state.player?.requestPointerLock();
+    state.playController?.requestPointerLock();
   }, 80);
 }
 
@@ -422,38 +439,38 @@ const uiRuntime = new UIRuntimeManager({
   minimapEl,
   minimap,
   globalMap,
-  getNetwork: () => net,
-  getPlayerName: () => playerName,
-  getGameState: () => gameState,
-  getGodModeActive: () => godModeActive,
+  getNetwork: () => state.net,
+  getPlayerName: () => state.playerName,
+  getGameState: () => state.gameState,
+  getGodModeActive: () => state.godModeActive,
   getCamera: () => camera,
-  getPlayerController: () => player,
-  getPlayController: () => playController,
-  getGodPlayer: () => godPlayer,
+  getPlayerController: () => state.player,
+  getPlayController: () => state.playController,
+  getGodPlayer: () => state.godPlayer,
   getSpawnedShips: () => spawnedShips,
-  getDrivenShip: () => drivenShip,
+  getDrivenShip: () => state.drivenShip,
 });
 
 const inputManager = new GameInputManager({
-  getGameState: () => gameState,
-  isEscOpen: () => escOpen,
-  isGodModeActive: () => godModeActive,
+  getGameState: () => state.gameState,
+  isEscOpen: () => state.escOpen,
+  isGodModeActive: () => state.godModeActive,
   onOpenEsc: () => openEsc(),
   onCloseEsc: () => closeEsc(),
   onEscapeInSandbox: () => {
-    if (sandboxPanel.isVisible()) sandboxPanel.hide();
+    if (state.sandboxPanel?.isVisible()) state.sandboxPanel.hide();
     else openEsc();
   },
   onToggleGodMode: () => toggleGodMode(),
-  onToggleSandboxPanel: () => sandboxPanel.toggle(),
-  onToggleSpawnPanel: () => spawnPanel.toggle(),
+  onToggleSandboxPanel: () => state.sandboxPanel?.toggle(),
+  onToggleSpawnPanel: () => state.spawnPanel?.toggle(),
   onToggleGlobalMap: () => {
     globalMap.toggle();
     if (globalMap.isVisible) {
       globalMap.resetPan();
-      player?.releasePointerLock();
-      playController?.releasePointerLock();
-      godPlayer?.releasePointerLock();
+      state.player?.releasePointerLock();
+      state.playController?.releasePointerLock();
+      state.godPlayer?.releasePointerLock();
       const gmCanvas = document.getElementById('global-map-canvas') as HTMLCanvasElement;
       const panel = document.getElementById('global-map-panel')!;
       const sz = panel.clientWidth;
@@ -464,31 +481,31 @@ const inputManager = new GameInputManager({
       _redrawGlobalMap();
     } else {
       setTimeout(() => {
-        if (gameState === 'playing' && !godModeActive) playController?.requestPointerLock();
-        else if (gameState === 'playing' && godModeActive) godPlayer?.requestPointerLock();
-        else player?.requestPointerLock();
+        if (state.gameState === 'playing' && !state.godModeActive) state.playController?.requestPointerLock();
+        else if (state.gameState === 'playing' && state.godModeActive) state.godPlayer?.requestPointerLock();
+        else state.player?.requestPointerLock();
       }, 80);
     }
   },
   onGlobalMapOpened: () => {},
   onGlobalMapClosed: () => {},
   onCanvasClick: (event: MouseEvent) => {
-    const canSpawn = gameState === 'sandbox' || (gameState === 'playing' && godModeActive);
-    if (spawnPanel.isSpawnModeActive() && canSpawn) {
+    const canSpawn = state.gameState === 'sandbox' || (state.gameState === 'playing' && state.godModeActive);
+    if (state.spawnPanel?.isSpawnModeActive() && canSpawn) {
       const result = raycastWater(event);
       if (result.hit) spawnShipAt(result.x, result.z);
       return;
     }
-    if (!escOpen && gameState === 'playing' && !godModeActive) {
-      playController?.requestPointerLock();
+    if (!state.escOpen && state.gameState === 'playing' && !state.godModeActive) {
+      state.playController?.requestPointerLock();
     }
   },
   updateSensitivity: (value: number) => {
-    if (player) player.sensitivity = value;
-    if (playController) playController.sensitivity = value;
+    if (state.player) state.player.sensitivity = value;
+    if (state.playController) state.playController.sensitivity = value;
   },
   updateSpeed: (value: number) => {
-    if (player) player.speed = value;
+    if (state.player) state.player.speed = value;
   },
   updateFov: (value: number) => {
     camera.fov = value;
@@ -592,25 +609,25 @@ gameLoop = new GameLoop({
       }
     }
 
-    if (!escOpen && gameState !== 'menu' && gameState !== 'playmenu') {
-      if (gameState === 'playing') {
-        if (godModeActive && godPlayer) {
-          godPlayer.update(dt);
-        } else if (playController) {
-          playController.update(dt);
+    if (!state.escOpen && state.gameState !== 'menu' && state.gameState !== 'playmenu') {
+      if (state.gameState === 'playing') {
+        if (state.godModeActive && state.godPlayer) {
+          state.godPlayer.update(dt);
+        } else if (state.playController) {
+          state.playController.update(dt);
         }
-      } else if (player) {
-        player.update(dt);
+      } else if (state.player) {
+        state.player.update(dt);
       }
 
-      if (gameState === 'playing' && net && playController && !godModeActive) {
+      if (state.gameState === 'playing' && state.net && state.playController && !state.godModeActive) {
         sendThrottle += dt;
         if (sendThrottle >= 0.05) {
           sendThrottle = 0;
-          const state = playController.getState();
-          net.sendMove(state.position, state.rotation);
+          const playState = state.playController.getState();
+          state.net.sendMove(playState.position, playState.rotation);
         }
-        net.interpolate();
+        state.net.interpolate();
       }
 
       for (const ship of spawnedShips) {
@@ -618,15 +635,15 @@ gameLoop = new GameLoop({
         updateShipMesh(ship.mesh, ship.body);
       }
 
-      if (drivenShip && playController && playController.isDrivingBoat()) {
-        const shipPos = drivenShip.body.position;
-        const shipRot = drivenShip.body.rotation.y;
+      if (state.drivenShip && state.playController && state.playController.isDrivingBoat()) {
+        const shipPos = state.drivenShip.body.position;
+        const shipRot = state.drivenShip.body.rotation.y;
         const cos = Math.cos(shipRot);
         const sin = Math.sin(shipRot);
-        const anchorX = shipPos.x + deckOffset.x * cos - deckOffset.z * sin;
-        const anchorZ = shipPos.z + deckOffset.x * sin + deckOffset.z * cos;
-        const anchorY = getDeckHeightAt(drivenShip, anchorX, anchorZ) ?? (shipPos.y + 1.5);
-        playController.attachToShip(shipPos, shipRot, deckOffset, anchorY);
+        const anchorX = shipPos.x + state.deckOffset.x * cos - state.deckOffset.z * sin;
+        const anchorZ = shipPos.z + state.deckOffset.x * sin + state.deckOffset.z * cos;
+        const anchorY = getDeckHeightAt(state.drivenShip, anchorX, anchorZ) ?? (shipPos.y + 1.5);
+        state.playController.attachToShip(shipPos, shipRot, state.deckOffset, anchorY);
       }
 
       updateHUD();
