@@ -541,6 +541,26 @@
     @keyframes notif-in  { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
     @keyframes notif-out { from { opacity: 1; } to { opacity: 0; } }
 
+    /* ─── Minimap ──────────────────────────────────────────────────────── */
+    #minimap {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      width: 180px;
+      height: 180px;
+      border-radius: 50%;
+      overflow: hidden;
+      z-index: 15;
+      box-shadow: 0 0 0 2px rgba(79,195,247,0.5), 0 4px 24px rgba(0,0,0,0.7);
+    }
+    #minimap.hidden { display: none; }
+    #minimap-canvas {
+      width: 180px;
+      height: 180px;
+      display: block;
+    }
+    #minimap-player { display: none; }
+
     /* ─── Crosshair ────────────────────────────────────────────────────── */
     #crosshair {
       position: fixed;
@@ -758,6 +778,223 @@
     
     /* Fix for Bun HMR overlay blocking clicks */
     bun-hmr { pointer-events: none !important; }
+
+    /* ─── Spawn Panel ─────────────────────────────────────────────────────── */
+    .spawn-panel {
+      position: fixed;
+      top: 50%; left: 20px;
+      transform: translateY(-50%);
+      width: 280px;
+      background: rgba(10, 18, 32, 0.95);
+      border: 1px solid rgba(79, 195, 247, 0.18);
+      border-radius: 8px;
+      box-shadow: 0 0 40px rgba(0,0,0,0.6);
+      z-index: 84;
+      overflow: hidden;
+    }
+    .spawn-panel.hidden { display: none; }
+
+    .spawn-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid rgba(79, 195, 247, 0.12);
+      font-size: 0.7rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: #4fc3f7;
+    }
+    .spawn-close {
+      background: none; border: none;
+      color: #4fc3f7; opacity: 0.5;
+      font-size: 1.2rem; cursor: pointer;
+      line-height: 1;
+      transition: opacity 0.15s;
+    }
+    .spawn-close:hover { opacity: 1; }
+
+    .spawn-content {
+      padding: 12px;
+    }
+
+    .spawn-item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 12px;
+      background: rgba(79, 195, 247, 0.05);
+      border: 1px solid rgba(79, 195, 247, 0.15);
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .spawn-item:hover {
+      background: rgba(79, 195, 247, 0.1);
+      border-color: rgba(79, 195, 247, 0.3);
+    }
+
+    .spawn-item-icon {
+      font-size: 1.5rem;
+    }
+
+    .spawn-item-info {
+      flex: 1;
+    }
+    .spawn-item-name {
+      font-size: 0.75rem;
+      font-weight: bold;
+      color: #e0f0ff;
+      margin-bottom: 2px;
+    }
+    .spawn-item-desc {
+      font-size: 0.6rem;
+      color: #9ecfec;
+      opacity: 0.7;
+    }
+
+    .spawn-hint {
+      padding: 8px 12px;
+      font-size: 0.6rem;
+      color: #9ecfec;
+      opacity: 0.6;
+      text-align: center;
+      border-top: 1px solid rgba(79, 195, 247, 0.06);
+    }
+    .spawn-hint .spawn-mode-btn {
+      color: #4fc3f7;
+    }
+
+    .spawn-mode-button {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      width: calc(100% - 24px);
+      margin: 8px 12px 12px;
+      padding: 10px;
+      background: rgba(79, 195, 247, 0.1);
+      border: 1px solid rgba(79, 195, 247, 0.3);
+      border-radius: 6px;
+      color: #4fc3f7;
+      font-family: 'Courier New', monospace;
+      font-size: 0.7rem;
+      letter-spacing: 0.1em;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .spawn-mode-button:hover {
+      background: rgba(79, 195, 247, 0.15);
+    }
+    .spawn-mode-button.active {
+      background: rgba(76, 175, 80, 0.2);
+      border-color: rgba(76, 175, 80, 0.5);
+      color: #81c784;
+    }
+
+    .spawn-cursor {
+      cursor: crosshair !important;
+    }
+    .spawn-cursor #canvas-container {
+      cursor: crosshair !important;
+    }
+
+    #crosshair.spawn-active {
+      border-color: #81c784 !important;
+      box-shadow: 0 0 12px rgba(76, 175, 80, 0.5);
+    }
+    #crosshair.spawn-active::before {
+      content: '';
+      position: absolute;
+      inset: -8px;
+      border: 2px dashed rgba(76, 175, 80, 0.4);
+      border-radius: 50%;
+    }
+
+    /* ─── Global Map Overlay ──────────────────────────────────────────── */
+    #global-map-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 70;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(4, 10, 18, 0.82);
+      backdrop-filter: blur(6px);
+      animation: gmap-fade-in 0.18s ease;
+    }
+    #global-map-overlay.hidden {
+      display: none;
+    }
+    @keyframes gmap-fade-in {
+      from { opacity: 0; transform: scale(0.97); }
+      to   { opacity: 1; transform: scale(1); }
+    }
+
+    #global-map-panel {
+      position: relative;
+      width: min(82vw, 82vh);
+      height: min(82vw, 82vh);
+      background: #071520;
+      border: 1px solid rgba(79, 195, 247, 0.35);
+      border-radius: 6px;
+      box-shadow: 0 0 80px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(79,195,247,0.08) inset;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #global-map-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      border-bottom: 1px solid rgba(79, 195, 247, 0.12);
+      background: rgba(7, 21, 32, 0.95);
+      flex-shrink: 0;
+      z-index: 1;
+    }
+    #global-map-title {
+      font-size: 0.7rem;
+      letter-spacing: 0.35em;
+      text-transform: uppercase;
+      color: #4fc3f7;
+    }
+    #global-map-hint {
+      font-size: 0.58rem;
+      letter-spacing: 0.15em;
+      color: #4fc3f7;
+      opacity: 0.45;
+    }
+    #global-map-close {
+      background: none;
+      border: none;
+      color: #4fc3f7;
+      opacity: 0.5;
+      font-size: 1.3rem;
+      cursor: pointer;
+      line-height: 1;
+      transition: opacity 0.15s;
+      font-family: 'Courier New', monospace;
+    }
+    #global-map-close:hover { opacity: 1; }
+
+    #global-map-recenter {
+      background: rgba(79,195,247,0.08);
+      border: 1px solid rgba(79,195,247,0.25);
+      border-radius: 4px;
+      color: #4fc3f7;
+      font-family: 'Courier New', monospace;
+      font-size: 0.6rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    #global-map-recenter:hover {
+      background: rgba(79,195,247,0.18);
+      border-color: #4fc3f7;
+    }
+
+    #global-map-canvas {
+      flex: 1;
+      width: 100%;
+      display: block;
+    }
   </style>
 </head>
 <body>
@@ -806,7 +1043,12 @@
     </div>
   </div>
   
-  <div id="controls-hint">WASD · FLY &nbsp;·&nbsp; MOUSE · LOOK &nbsp;·&nbsp; E/Q · UP/DOWN &nbsp;·&nbsp; SHIFT · FAST &nbsp;·&nbsp; TAB · SANDBOX &nbsp;·&nbsp; ESC · MENU</div>
+  <div id="minimap">
+    <canvas id="minimap-canvas" width="180" height="180"></canvas>
+    <div id="minimap-player"></div>
+  </div>
+  
+  <div id="controls-hint">WASD · MOVE &nbsp;·&nbsp; MOUSE · LOOK &nbsp;·&nbsp; E/Q · UP/DOWN &nbsp;·&nbsp; SHIFT · SPRINT &nbsp;·&nbsp; Y · GOD MODE &nbsp;·&nbsp; P · SPAWN &nbsp;·&nbsp; M · MAP &nbsp;·&nbsp; ESC · MENU</div>
 </div>
 
 <div id="crosshair"></div>
@@ -877,13 +1119,15 @@
     <!-- Controls tab -->
     <div class="esc-pane" id="tab-controls">
       <table class="keybind-table">
-        <tr><td class="kkey"><kbd>W A S D</kbd></td><td class="kdesc">Fly forward / back / left / right</td></tr>
-        <tr><td class="kkey"><kbd>E</kbd> / <kbd>Space</kbd></td><td class="kdesc">Fly up</td></tr>
-        <tr><td class="kkey"><kbd>Q</kbd> / <kbd>Ctrl</kbd></td><td class="kdesc">Fly down</td></tr>
-        <tr><td class="kkey"><kbd>Shift</kbd></td><td class="kdesc">Speed boost (5×)</td></tr>
+        <tr><td class="kkey"><kbd>W A S D</kbd></td><td class="kdesc">Move forward / back / left / right</td></tr>
+        <tr><td class="kkey"><kbd>E</kbd> / <kbd>Space</kbd></td><td class="kdesc">Move up (god mode) / Jump</td></tr>
+        <tr><td class="kkey"><kbd>Q</kbd> / <kbd>Ctrl</kbd></td><td class="kdesc">Move down (god mode)</td></tr>
+        <tr><td class="kkey"><kbd>Shift</kbd></td><td class="kdesc">Sprint / Speed boost</td></tr>
         <tr><td class="kkey"><kbd>Mouse</kbd></td><td class="kdesc">Look around</td></tr>
         <tr><td class="kkey"><kbd>Click</kbd></td><td class="kdesc">Lock mouse cursor</td></tr>
-        <tr><td class="kkey"><kbd>Tab</kbd> / <kbd>G</kbd></td><td class="kdesc">Toggle sandbox panel</td></tr>
+        <tr><td class="kkey"><kbd>Y</kbd></td><td class="kdesc">Toggle god mode (free camera + spawn)</td></tr>
+        <tr><td class="kkey"><kbd>P</kbd></td><td class="kdesc">Toggle spawn panel (god mode only)</td></tr>
+        <tr><td class="kkey"><kbd>M</kbd></td><td class="kdesc">Open / close world map</td></tr>
         <tr><td class="kkey"><kbd>Esc</kbd></td><td class="kdesc">Open / close this menu</td></tr>
       </table>
     </div>
@@ -893,6 +1137,19 @@
       <button class="esc-btn esc-btn-primary" id="esc-resume">Resume</button>
     </div>
 
+  </div>
+</div>
+
+<!-- ── Global Map ─────────────────────────────── -->
+<div id="global-map-overlay" class="hidden">
+  <div id="global-map-panel">
+    <div id="global-map-header">
+      <span id="global-map-title">World Map</span>
+      <span id="global-map-hint">M · close &nbsp;·&nbsp; drag to pan</span>
+      <button id="global-map-recenter">⊕ Recenter</button>
+      <button id="global-map-close">✕</button>
+    </div>
+    <canvas id="global-map-canvas"></canvas>
   </div>
 </div>
 
