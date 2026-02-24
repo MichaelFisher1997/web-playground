@@ -1,5 +1,11 @@
 import * as THREE from 'three';
-import type { WorldGenerator } from '../world/generator.js';
+import type { Island } from '../world/islands.js';
+
+export interface TerrainHeightProvider {
+  getHeightAt(x: number, z: number): number;
+  getIslands(): Island[];
+  config: { waterHeight: number };
+}
 
 const WALK_SPEED = 6.0;
 const SPRINT_SPEED = 10.0;
@@ -24,10 +30,20 @@ export interface PlayControllerState {
   isGrounded: boolean;
 }
 
+export interface PlayControllerCallbacks {
+  onWaterDeath?: () => void;
+  onHealthChange?: (health: number) => void;
+  onStaminaChange?: (stamina: number) => void;
+  getShipDeckHeight?: (x: number, z: number) => number | null;
+  onEnterBoat?: () => void;
+  onExitBoat?: () => void;
+  onBoatInput?: (thrust: number, steering: number) => void;
+}
+
 export class PlayModeController {
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
-  private worldGenerator: WorldGenerator;
+  private terrainProvider: TerrainHeightProvider;
 
   private _velocity: THREE.Vector3 = new THREE.Vector3();
   private _isGrounded: boolean = false;
@@ -55,13 +71,7 @@ export class PlayModeController {
   private _wasGrounded: boolean = false;
   private _jumpCooldownTimer: number = 0;
 
-  onWaterDeath: (() => void) | null = null;
-  onHealthChange: ((health: number) => void) | null = null;
-  onStaminaChange: ((stamina: number) => void) | null = null;
-  getShipDeckHeight: ((x: number, z: number) => number | null) | null = null;
-  onEnterBoat: (() => void) | null = null;
-  onExitBoat: (() => void) | null = null;
-  onBoatInput: ((thrust: number, steering: number) => void) | null = null;
+  private _callbacks: PlayControllerCallbacks = {};
 
   private _standingOnShip: boolean = false;
   private _shipVelocity: THREE.Vector3 = new THREE.Vector3();
@@ -71,12 +81,14 @@ export class PlayModeController {
   constructor(
     scene: THREE.Scene,
     camera: THREE.PerspectiveCamera,
-    worldGenerator: WorldGenerator,
-    spawnPosition: { x: number; y: number; z: number }
+    terrainProvider: TerrainHeightProvider,
+    spawnPosition: { x: number; y: number; z: number },
+    callbacks: PlayControllerCallbacks = {},
   ) {
     this.scene = scene;
     this.camera = camera;
-    this.worldGenerator = worldGenerator;
+    this.terrainProvider = terrainProvider;
+    this._callbacks = callbacks;
 
     const created = this._createCharacterMesh();
     this._characterMesh = created.mesh;
@@ -95,6 +107,10 @@ export class PlayModeController {
 
     this._bindInputs();
     this._updateCameraPosition();
+  }
+
+  setCallbacks(callbacks: PlayControllerCallbacks): void {
+    this._callbacks = callbacks;
   }
 
   private _createFirstPersonGun(): THREE.Group {
@@ -373,7 +389,7 @@ export class PlayModeController {
   }
 
   private _getTerrainHeightAt(x: number, z: number): number {
-    return this.worldGenerator.getHeightAt(x, z);
+    return this.terrainProvider.getHeightAt(x, z);
   }
 
   private _checkGroundCollision(): { isGrounded: boolean; height: number; isShip: boolean } {
@@ -383,8 +399,8 @@ export class PlayModeController {
     let surfaceHeight = groundHeight;
     let isShip = false;
     
-    if (this.getShipDeckHeight) {
-      const shipDeckHeight = this.getShipDeckHeight(pos.x, pos.z);
+    if (this._callbacks.getShipDeckHeight) {
+      const shipDeckHeight = this._callbacks.getShipDeckHeight(pos.x, pos.z);
       if (shipDeckHeight !== null && shipDeckHeight > groundHeight) {
         surfaceHeight = shipDeckHeight;
         isShip = true;
@@ -399,12 +415,12 @@ export class PlayModeController {
     if (fallDistance > FALL_DAMAGE_THRESHOLD) {
       const damage = (fallDistance - FALL_DAMAGE_THRESHOLD) * FALL_DAMAGE_MULTIPLIER;
       this.health = Math.max(0, this.health - damage);
-      this.onHealthChange?.(this.health);
+      this._callbacks.onHealthChange?.(this.health);
     }
   }
 
   private _respawn(): void {
-    const islands = this.worldGenerator.getIslands();
+    const islands = this.terrainProvider.getIslands();
     if (islands.length === 0) {
       this._characterMesh.position.set(0, 50, 0);
     } else {
@@ -420,8 +436,8 @@ export class PlayModeController {
     this._velocity.set(0, 0, 0);
     this.health = 100;
     this.stamina = STAMINA_MAX;
-    this.onHealthChange?.(this.health);
-    this.onStaminaChange?.(this.stamina);
+    this._callbacks.onHealthChange?.(this.health);
+    this._callbacks.onStaminaChange?.(this.stamina);
   }
 
   update(dt: number): void {
@@ -430,13 +446,13 @@ export class PlayModeController {
     if (this._jumpCooldownTimer > 0) this._jumpCooldownTimer -= dt;
     if (this._driveCooldown > 0) this._driveCooldown -= dt;
 
-    const waterHeight = this.worldGenerator.config.waterHeight;
+    const waterHeight = this.terrainProvider.config.waterHeight;
     const playerY = this._characterMesh.position.y;
     const isInWater = playerY < waterHeight + 0.5;
 
     let deckHeight: number | null = null;
-    if (this.getShipDeckHeight) {
-      deckHeight = this.getShipDeckHeight(this._characterMesh.position.x, this._characterMesh.position.z);
+    if (this._callbacks.getShipDeckHeight) {
+      deckHeight = this._callbacks.getShipDeckHeight(this._characterMesh.position.x, this._characterMesh.position.z);
     }
     
     this._standingOnShip = deckHeight !== null && playerY <= deckHeight + 1.5;
@@ -450,10 +466,10 @@ export class PlayModeController {
       if (keys['KeyA'] || keys['ArrowLeft']) steering = 1;
       if (keys['KeyD'] || keys['ArrowRight']) steering = -1;
       
-      this.onBoatInput?.(thrust, steering);
+      this._callbacks.onBoatInput?.(thrust, steering);
       
       if (keys['KeyE'] && this._driveCooldown <= 0) {
-        this.onExitBoat?.();
+          this._callbacks.onExitBoat?.();
         this._isDrivingBoat = false;
         this._driveCooldown = 0.3;
       }
@@ -463,7 +479,7 @@ export class PlayModeController {
     }
 
     if (keys['KeyE'] && this._standingOnShip && this._driveCooldown <= 0) {
-      this.onEnterBoat?.();
+      this._callbacks.onEnterBoat?.();
       this._driveCooldown = 0.3;
     }
     
@@ -483,7 +499,7 @@ export class PlayModeController {
       }
       
       if (playerY < waterHeight - 8) {
-        this.onWaterDeath?.();
+        this._callbacks.onWaterDeath?.();
         this._respawn();
         return;
       }
@@ -506,7 +522,7 @@ export class PlayModeController {
     } else if (this.stamina < STAMINA_MAX) {
       const prev = this.stamina;
       this.stamina = Math.min(STAMINA_MAX, this.stamina + STAMINA_REGEN_RATE * dt);
-      if (Math.floor(prev) !== Math.floor(this.stamina)) this.onStaminaChange?.(this.stamina);
+      if (Math.floor(prev) !== Math.floor(this.stamina)) this._callbacks.onStaminaChange?.(this.stamina);
     }
 
     const isSprinting = (keys['ShiftLeft'] || keys['ShiftRight']) && this.stamina > 0;
@@ -526,7 +542,7 @@ export class PlayModeController {
       if (isSprinting) {
         this.stamina = Math.max(0, this.stamina - SPRINT_STAMINA_COST * dt);
         this._staminaRegenTimer = STAMINA_REGEN_DELAY;
-        this.onStaminaChange?.(this.stamina);
+        this._callbacks.onStaminaChange?.(this.stamina);
       }
       this._velocity.x = move.x * moveSpeed;
       this._velocity.z = move.z * moveSpeed;
@@ -541,7 +557,7 @@ export class PlayModeController {
       this._isGrounded = false;
       this.stamina = Math.max(0, this.stamina - JUMP_STAMINA_COST);
       this._staminaRegenTimer = STAMINA_REGEN_DELAY;
-      this.onStaminaChange?.(this.stamina);
+      this._callbacks.onStaminaChange?.(this.stamina);
     }
 
     if (!isInWater || this._standingOnShip) {
@@ -554,8 +570,8 @@ export class PlayModeController {
     const terrainHeight = this._getTerrainHeightAt(next.x, next.z);
     let surfaceHeight = terrainHeight;
     
-    if (this.getShipDeckHeight) {
-      const shipDeck = this.getShipDeckHeight(next.x, next.z);
+    if (this._callbacks.getShipDeckHeight) {
+      const shipDeck = this._callbacks.getShipDeckHeight(next.x, next.z);
       if (shipDeck !== null && shipDeck > surfaceHeight) {
         surfaceHeight = shipDeck;
         this._standingOnShip = true;

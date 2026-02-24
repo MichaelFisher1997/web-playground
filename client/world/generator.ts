@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { SeededNoise } from './noise';
 import { IslandPlacer, Island, WorldConfig } from './islands';
+import { getTerrainColor } from './terrain-color.js';
 
 export type { WorldConfig } from './islands';
 export type { Island } from './islands';
@@ -137,62 +138,14 @@ export class WorldGenerator {
     return blendedHeight;
   }
 
-  private getIslandColor(h: number, island: Island | null, normalizedHeight: number, x: number, z: number): THREE.Color {
-    const { waterHeight, oceanDepth } = this.config;
-    
-    // Deep ocean floor
-    if (h < oceanDepth + 2) {
-      const deep = new THREE.Color(0x1a3d5c);
-      const darker = new THREE.Color(0x0d1f2e);
-      const t = Math.max(0, Math.min(1, (h - oceanDepth) / 2));
-      return darker.clone().lerp(deep, t);
-    }
-    
-    // Underwater slope - transition from dark blue to sand
-    if (h < waterHeight - 1) {
-      const underwater = new THREE.Color(0x1a3d5c);
-      const sand = new THREE.Color(0x8b7355);
-      const t = Math.max(0, Math.min(1, (h - (waterHeight - 5)) / 4));
-      return underwater.clone().lerp(sand, t * 0.5);
-    }
-    
-    // Shallow water / wet sand near shore
-    if (h < waterHeight + 0.5) {
-      const wetSand = new THREE.Color(0xc9a86c);
-      const drySand = new THREE.Color(0xe8d4a8);
-      const t = Math.max(0, Math.min(1, (h - (waterHeight - 1)) / 1.5));
-      return wetSand.clone().lerp(drySand, t);
-    }
-    
-    // Beach / low vegetation
-    if (h < waterHeight + 2) {
-      const sand = new THREE.Color(0xe8d4a8);
-      const grass = new THREE.Color(0x4a8c3f);
-      const t = Math.max(0, Math.min(1, (h - (waterHeight + 0.5)) / 1.5));
-      return sand.clone().lerp(grass, t);
-    }
-
-    // Higher terrain based on island type
-    const t = normalizedHeight;
-    
-    switch (island?.type || 'tropical') {
-      case 'tropical':
-        if (t < 0.2) return new THREE.Color(0x4a8c3f);  // Lush green
-        if (t < 0.4) return new THREE.Color(0x3a7a30);  // Darker green
-        if (t < 0.6) return new THREE.Color(0x5a6050);  // Rocky
-        if (t < 0.8) return new THREE.Color(0x8a8880);  // Gray rock
-        return new THREE.Color(0xffffff);                // Snow caps
-      case 'rocky':
-        if (t < 0.2) return new THREE.Color(0x5a6a50);  // Mossy rock
-        if (t < 0.5) return new THREE.Color(0x6a6a60);  // Gray rock
-        return new THREE.Color(0x8a8880);                // Light rock
-      case 'sandy':
-        if (t < 0.3) return new THREE.Color(0xd4c49a);  // Sand
-        if (t < 0.6) return new THREE.Color(0xc4b48a);  // Darker sand
-        return new THREE.Color(0xa0a090);                // Rock
-      default:
-        return new THREE.Color(0x4a8c3f);
-    }
+  private getIslandColor(h: number, island: Island | null, normalizedHeight: number): THREE.Color {
+    return getTerrainColor({
+      height: h,
+      normalizedHeight,
+      islandType: island?.type,
+      waterHeight: this.config.waterHeight,
+      oceanDepth: this.config.oceanDepth,
+    });
   }
 
   private getClosestIsland(x: number, z: number): Island | null {
@@ -230,7 +183,7 @@ export class WorldGenerator {
 
       const closestIsland = this.getClosestIsland(x, z);
       const normalizedHeight = Math.max(0, h) / maxTerrainHeight;
-      const col = this.getIslandColor(h, closestIsland, normalizedHeight, x, z);
+      const col = this.getIslandColor(h, closestIsland, normalizedHeight);
       
       colors[i * 3] = col.r;
       colors[i * 3 + 1] = col.g;

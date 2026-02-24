@@ -362,6 +362,55 @@ export interface WaterConfig {
   islandRadii?: number[];
 }
 
+export function getWaterSurfaceHeight(
+  x: number,
+  z: number,
+  time: number,
+  waterHeight: number,
+  waveHeight: number,
+  waveSpeed: number,
+  islands: Array<{ x: number; z: number; radius: number }>,
+): number {
+  const gerstner = (
+    px: number,
+    pz: number,
+    amplitude: number,
+    wavelength: number,
+    speed: number,
+    dirX: number,
+    dirZ: number,
+  ): number => {
+    const frequency = 2.0 / wavelength;
+    const phaseConstant = speed * 2.0 / wavelength;
+    const len = Math.sqrt(dirX * dirX + dirZ * dirZ);
+    const ndx = dirX / len;
+    const ndz = dirZ / len;
+    const fi = time * waveSpeed * phaseConstant;
+    const dirDotPos = ndx * px + ndz * pz;
+    return amplitude * Math.sin(frequency * dirDotPos + fi) * waveHeight;
+  };
+
+  let closest = 1e6;
+  for (const island of islands) {
+    const d = Math.sqrt((x - island.x) ** 2 + (z - island.z) ** 2) - island.radius;
+    closest = Math.min(closest, d);
+  }
+  const calm = Math.max(0, Math.min(1, (closest - 1) / 8));
+  const nearshoreScale = 0.45 + 0.7 * calm;
+
+  const total = (
+    gerstner(x, z, 1.15, 64.0, 0.9, 1.0, 0.2) +
+    gerstner(x, z, 0.82, 42.0, 0.8, -0.6, 1.0) +
+    gerstner(x, z, 0.58, 27.0, 1.2, 0.8, -0.5) +
+    gerstner(x, z, 0.48, 16.0, 1.6, -0.3, 0.7) +
+    gerstner(x, z, 0.38, 10.0, 2.0, 0.6, 0.5) +
+    gerstner(x, z, 0.26, 6.8, 2.4, -0.8, 0.3) +
+    gerstner(x, z, 0.18, 4.2, 3.0, 0.4, -0.9)
+  ) * 1.55 * nearshoreScale;
+
+  return waterHeight + total;
+}
+
 export function createWater(config: Partial<WaterConfig> = {}): THREE.Mesh {
   const {
     size           = 500,

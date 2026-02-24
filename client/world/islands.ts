@@ -8,27 +8,40 @@ export interface Island {
   noiseOffsetX: number;
   noiseOffsetZ: number;
   edgeFalloff: number;
-  type: 'tropical' | 'rocky' | 'sandy';
+  type: IslandType;
 }
 
-export interface WorldConfig {
+export type IslandType = 'tropical' | 'rocky' | 'sandy';
+
+export interface WorldGenerationConfig {
   seed: number | string;
   worldSize: number;
   resolution: number;
   islandCount: number;
   minIslandSize: number;
   maxIslandSize: number;
+}
+
+export interface NoiseConfig {
   noiseFrequency: number;
   noiseOctaves: number;
   noiseLacunarity: number;
   noisePersistence: number;
+}
+
+export interface WaterSurfaceConfig {
   waterHeight: number;
   waveHeight: number;
   waveSpeed: number;
+}
+
+export interface AtmosphereConfig {
   maxTerrainHeight: number;
   oceanDepth: number;
   fogDensity: number;
 }
+
+export interface WorldConfig extends WorldGenerationConfig, NoiseConfig, WaterSurfaceConfig, AtmosphereConfig {}
 
 export class IslandPlacer {
   private config: WorldConfig;

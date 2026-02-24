@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { PlayerState, ClientMessage, ServerMessage } from '../../shared/types';
+import type { INetworkClient, NetworkMoveState } from './network-client.js';
 
 const LERP_FACTOR = 0.18;
 
@@ -13,7 +14,7 @@ interface RemotePlayer {
   color: number;
 }
 
-export class NetworkSync {
+export class NetworkSync implements INetworkClient {
   private scene: THREE.Scene;
   private onWelcome: (id: string) => void;
   private onNotification: (msg: string) => void;
@@ -193,7 +194,7 @@ export class NetworkSync {
     }
   }
 
-  sendMove(position: { x: number; y: number; z: number }, rotation: number): void {
+  sendMove(position: NetworkMoveState, rotation: number): void {
     if (!this.connected || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     this.ws.send(JSON.stringify({ type: 'move', position, rotation }));
   }

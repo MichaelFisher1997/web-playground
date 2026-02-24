@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { WorldGenerator, DEFAULT_CONFIG, WorldConfig } from './world/generator.js';
-import { createWater, updateWater, setWaterParams, resizeWaterUniforms } from './world/water.js';
+import { createWater, updateWater, setWaterParams, resizeWaterUniforms, getWaterSurfaceHeight } from './world/water.js';
 import { createOceanFloor, updateOceanFloor } from './world/ocean-floor.js';
 import { PlayerController } from './player/controller.js';
-import { PlayModeController } from './player/play-controller.js';
+import { PlayModeController, type PlayControllerCallbacks } from './player/play-controller.js';
 import { NetworkSync } from './network/sync.js';
 import { MainMenu } from './ui/menu.js';
 import { PlayMenu } from './ui/play-menu.js';
@@ -162,44 +162,15 @@ function getRandomSpawnPosition(): { x: number; y: number; z: number } {
 
 function getWaterHeight(x: number, z: number, time: number): number {
   const config = generator.config;
-  const baseHeight = config.waterHeight;
-  const waveHeight = config.waveHeight;
-  const waveSpeed = config.waveSpeed;
-
-  const gerstner = (
-    px: number, pz: number,
-    amplitude: number, wavelength: number, speed: number,
-    dirX: number, dirZ: number, steepness: number
-  ): number => {
-    const frequency = 2.0 / wavelength;
-    const phaseConstant = speed * 2.0 / wavelength;
-    const len = Math.sqrt(dirX * dirX + dirZ * dirZ);
-    dirX /= len; dirZ /= len;
-    const fi = time * waveSpeed * phaseConstant;
-    const dirDotPos = dirX * px + dirZ * pz;
-    return amplitude * Math.sin(frequency * dirDotPos + fi) * waveHeight;
-  };
-
-  const islands = generator.getIslands();
-  let closest = 1e6;
-  for (const isl of islands) {
-    const d = Math.sqrt((x - isl.x) ** 2 + (z - isl.z) ** 2) - isl.radius;
-    closest = Math.min(closest, d);
-  }
-  const calm = Math.max(0, Math.min(1, (closest - 1) / 8));
-  const nearshoreScale = 0.45 + 0.7 * calm;
-
-  const total = (
-    gerstner(x, z, 1.15, 64.0, 0.9, 1.0, 0.2, 0.34) +
-    gerstner(x, z, 0.82, 42.0, 0.8, -0.6, 1.0, 0.26) +
-    gerstner(x, z, 0.58, 27.0, 1.2, 0.8, -0.5, 0.20) +
-    gerstner(x, z, 0.48, 16.0, 1.6, -0.3, 0.7, 0.16) +
-    gerstner(x, z, 0.38, 10.0, 2.0, 0.6, 0.5, 0.12) +
-    gerstner(x, z, 0.26, 6.8, 2.4, -0.8, 0.3, 0.10) +
-    gerstner(x, z, 0.18, 4.2, 3.0, 0.4, -0.9, 0.08)
-  ) * 1.55 * nearshoreScale;
-
-  return baseHeight + total;
+  return getWaterSurfaceHeight(
+    x,
+    z,
+    time,
+    config.waterHeight,
+    config.waveHeight,
+    config.waveSpeed,
+    generator.getIslands(),
+  );
 }
 
 function initWorld(config: Partial<WorldConfig> = {}, resetPosition: boolean = true): void {
@@ -333,82 +304,72 @@ function startPlayMode(config: WorldConfig): void {
   initWorld(config, false);
   
   const spawnPos = getRandomSpawnPosition();
-  playController = new PlayModeController(scene, camera, generator, spawnPos);
-  playController.sensitivity = parseFloat((document.getElementById('sens-slider') as HTMLInputElement).value);
-  
-  playController.getShipDeckHeight = (x: number, z: number): number | null => {
-    let highestDeck: number | null = null;
-    for (const ship of spawnedShips) {
-      const deckY = getDeckHeightAt(ship, x, z);
-      if (deckY !== null && (highestDeck === null || deckY > highestDeck)) {
-        highestDeck = deckY;
+  const callbacks: PlayControllerCallbacks = {
+    getShipDeckHeight: (x: number, z: number): number | null => {
+      let highestDeck: number | null = null;
+      for (const ship of spawnedShips) {
+        const deckY = getDeckHeightAt(ship, x, z);
+        if (deckY !== null && (highestDeck === null || deckY > highestDeck)) {
+          highestDeck = deckY;
+        }
       }
-    }
-    return highestDeck;
-  };
-  
-  playController.onHealthChange = (health) => {
-    updateHealthBar(health);
-  };
-  playController.onStaminaChange = (stamina) => {
-    updateStaminaBar(stamina);
-  };
-  playController.onWaterDeath = () => {
-    showNotification('You fell into the water! Respawning...');
-  };
-  
-  playController.onEnterBoat = () => {
-    const playerPos = playController?.getCharacterPosition();
-    if (!playerPos) return;
-    
-    for (const ship of spawnedShips) {
-      const deckY = getDeckHeightAt(ship, playerPos.x, playerPos.z);
-      if (deckY !== null) {
-        drivenShip = ship;
-
-        // Keep driver anchored at a stable helm point on the stern deck.
-        deckOffset.x = 1.8;
-        deckOffset.z = 0;
-
-        const shipPos = ship.body.position;
-        const shipRot = ship.body.rotation.y;
+      return highestDeck;
+    },
+    onHealthChange: (health: number) => {
+      updateHealthBar(health);
+    },
+    onStaminaChange: (stamina: number) => {
+      updateStaminaBar(stamina);
+    },
+    onWaterDeath: () => {
+      showNotification('You fell into the water! Respawning...');
+    },
+    onEnterBoat: () => {
+      const playerPos = playController?.getCharacterPosition();
+      if (!playerPos) return;
+      for (const ship of spawnedShips) {
+        const deckY = getDeckHeightAt(ship, playerPos.x, playerPos.z);
+        if (deckY !== null) {
+          drivenShip = ship;
+          deckOffset.x = 1.8;
+          deckOffset.z = 0;
+          const shipPos = ship.body.position;
+          const shipRot = ship.body.rotation.y;
+          const cos = Math.cos(shipRot);
+          const sin = Math.sin(shipRot);
+          const helmX = shipPos.x + deckOffset.x * cos - deckOffset.z * sin;
+          const helmZ = shipPos.z + deckOffset.x * sin + deckOffset.z * cos;
+          const helmY = getDeckHeightAt(ship, helmX, helmZ) ?? deckY;
+          playController?.setPosition(helmX, helmY, helmZ);
+          playController?.setDrivingBoat(true);
+          showNotification('Driving boat! WASD to steer, E to exit');
+          break;
+        }
+      }
+    },
+    onExitBoat: () => {
+      if (drivenShip && playController) {
+        const shipPos = drivenShip.body.position;
+        const shipRot = drivenShip.body.rotation.y;
         const cos = Math.cos(shipRot);
         const sin = Math.sin(shipRot);
-        const helmX = shipPos.x + deckOffset.x * cos - deckOffset.z * sin;
-        const helmZ = shipPos.z + deckOffset.x * sin + deckOffset.z * cos;
-        const helmY = getDeckHeightAt(ship, helmX, helmZ) ?? deckY;
-        playController.setPosition(helmX, helmY, helmZ);
-        
-        playController?.setDrivingBoat(true);
-        showNotification('Driving boat! WASD to steer, E to exit');
-        break;
+        const exitX = shipPos.x + deckOffset.x * cos - deckOffset.z * sin + 2;
+        const exitZ = shipPos.z + deckOffset.x * sin + deckOffset.z * cos;
+        const exitY = getDeckHeightAt(drivenShip, exitX, exitZ) ?? shipPos.y + 2;
+        playController.setPosition(exitX, exitY, exitZ);
+        playController.setDrivingBoat(false);
       }
-    }
+      drivenShip = null;
+      showNotification('Exited boat');
+    },
+    onBoatInput: (thrust: number, steering: number) => {
+      if (drivenShip) {
+        applyBoatInput(drivenShip.body, thrust, steering);
+      }
+    },
   };
-  
-  playController.onExitBoat = () => {
-    if (drivenShip && playController) {
-      const shipPos = drivenShip.body.position;
-      const shipRot = drivenShip.body.rotation.y;
-      const cos = Math.cos(shipRot);
-      const sin = Math.sin(shipRot);
-      
-      const exitX = shipPos.x + deckOffset.x * cos - deckOffset.z * sin + 2;
-      const exitZ = shipPos.z + deckOffset.x * sin + deckOffset.z * cos;
-      const exitY = getDeckHeightAt(drivenShip, exitX, exitZ) ?? shipPos.y + 2;
-      
-      playController.setPosition(exitX, exitY, exitZ);
-      playController.setDrivingBoat(false);
-    }
-    drivenShip = null;
-    showNotification('Exited boat');
-  };
-  
-  playController.onBoatInput = (thrust: number, steering: number) => {
-    if (drivenShip) {
-      applyBoatInput(drivenShip.body, thrust, steering);
-    }
-  };
+  playController = new PlayModeController(scene, camera, generator, spawnPos, callbacks);
+  playController.sensitivity = parseFloat((document.getElementById('sens-slider') as HTMLInputElement).value);
   
   updateHealthBar(100);
   updateStaminaBar(100);
