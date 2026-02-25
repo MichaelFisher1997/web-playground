@@ -49,6 +49,11 @@ export class PlayModeController {
   private _isGrounded: boolean = false;
   private _keys: Record<string, boolean> = {};
   private _pointerLocked: boolean = false;
+  private _onKeyDown: ((e: KeyboardEvent) => void) | null = null;
+  private _onKeyUp: ((e: KeyboardEvent) => void) | null = null;
+  private _onWheel: ((e: WheelEvent) => void) | null = null;
+  private _onPointerLockChange: (() => void) | null = null;
+  private _onMouseMove: ((e: MouseEvent) => void) | null = null;
 
   yaw: number = 0;
   pitch: number = 0;
@@ -191,7 +196,7 @@ export class PlayModeController {
   }
 
   private _bindInputs(): void {
-    window.addEventListener('keydown', (e) => {
+    this._onKeyDown = (e: KeyboardEvent) => {
       this._keys[e.code] = true;
       if (e.code === 'Space') e.preventDefault();
 
@@ -202,35 +207,36 @@ export class PlayModeController {
           this._toggleCameraMode();
         }
       }
-    });
+    };
+    window.addEventListener('keydown', this._onKeyDown);
 
-    window.addEventListener('keyup', (e) => {
+    this._onKeyUp = (e: KeyboardEvent) => {
       this._keys[e.code] = false;
-    });
+    };
+    window.addEventListener('keyup', this._onKeyUp);
 
-    window.addEventListener(
-      'wheel',
-      (e) => {
-        if (!this._isFirstPerson) {
-          this._cameraDistance = Math.max(4, Math.min(16, this._cameraDistance + Math.sign(e.deltaY) * 0.6));
-        }
-      },
-      { passive: true }
-    );
+    this._onWheel = (e: WheelEvent) => {
+      if (!this._isFirstPerson) {
+        this._cameraDistance = Math.max(4, Math.min(16, this._cameraDistance + Math.sign(e.deltaY) * 0.6));
+      }
+    };
+    window.addEventListener('wheel', this._onWheel, { passive: true });
 
-    document.addEventListener('pointerlockchange', () => {
+    this._onPointerLockChange = () => {
       this._pointerLocked = document.pointerLockElement === document.body;
       const crosshair = document.getElementById('crosshair');
       if (crosshair) crosshair.classList.toggle('active', this._pointerLocked);
-    });
+    };
+    document.addEventListener('pointerlockchange', this._onPointerLockChange);
 
-    document.addEventListener('mousemove', (e) => {
+    this._onMouseMove = (e: MouseEvent) => {
       if (!this._pointerLocked) return;
 
       const sens = 0.0018 * this.sensitivity;
       this.yaw -= e.movementX * sens;
       this.pitch = Math.max(-0.55, Math.min(1.1, this.pitch + e.movementY * sens));
-    });
+    };
+    document.addEventListener('mousemove', this._onMouseMove);
   }
 
   private _toggleCameraMode(): void {
@@ -654,6 +660,11 @@ export class PlayModeController {
   }
 
   destroy(): void {
+    if (this._onKeyDown) window.removeEventListener('keydown', this._onKeyDown);
+    if (this._onKeyUp) window.removeEventListener('keyup', this._onKeyUp);
+    if (this._onWheel) window.removeEventListener('wheel', this._onWheel);
+    if (this._onPointerLockChange) document.removeEventListener('pointerlockchange', this._onPointerLockChange);
+    if (this._onMouseMove) document.removeEventListener('mousemove', this._onMouseMove);
     this.scene.remove(this._characterMesh);
     this.camera.remove(this._firstPersonGun);
   }

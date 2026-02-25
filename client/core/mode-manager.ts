@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import type { WorldConfig } from '../world/generator.js';
 import { PlayerController } from '../player/controller.js';
 import { PlayModeController, type PlayControllerCallbacks } from '../player/play-controller.js';
-import type { SpawnedShip } from '../objects/ship.js';
 import type { WorldManager } from './world-manager.js';
+import type { ShipSystem } from '../systems/ship-system.js';
 
 export interface ModeRuntimeState {
   gameState: 'menu' | 'playmenu' | 'sandbox' | 'playing' | 'paused';
@@ -11,8 +11,6 @@ export interface ModeRuntimeState {
   player: PlayerController | null;
   playController: PlayModeController | null;
   godPlayer: PlayerController | null;
-  drivenShip: SpawnedShip | null;
-  deckOffset: { x: number; z: number };
 }
 
 export interface ModeManagerContext {
@@ -21,7 +19,7 @@ export interface ModeManagerContext {
   camera: THREE.PerspectiveCamera;
   hud: HTMLElement;
   worldManager: WorldManager;
-  spawnedShips: SpawnedShip[];
+  shipSystem: ShipSystem;
   initWorld: (config: Partial<WorldConfig>, resetPosition?: boolean) => void;
   hidePlayMenu: () => void;
   showSpawnPanel: () => void;
@@ -33,134 +31,123 @@ export interface ModeManagerContext {
   updateStaminaBar: (stamina: number) => void;
   getSensitivity: () => number;
   getSpeed: () => number;
-  getDeckHeightAt: (ship: SpawnedShip, x: number, z: number) => number | null;
-  applyBoatInput: (body: SpawnedShip['body'], thrust: number, steering: number) => void;
 }
 
-export function startPlayMode(context: ModeManagerContext, config: WorldConfig): void {
-  const { state } = context;
-  state.gameState = 'playing';
-  state.godModeActive = false;
-  context.hidePlayMenu();
-  context.hud.classList.remove('hidden');
+export class ModeManager {
+  private context: ModeManagerContext;
 
-  const hudBars = document.getElementById('hud-bars');
-  if (hudBars) hudBars.style.display = 'flex';
+  constructor(context: ModeManagerContext) {
+    this.context = context;
+  }
 
-  context.initWorld(config, false);
-  const spawnPos = context.worldManager.getRandomSpawnPosition();
+  startPlayMode(config: WorldConfig): void {
+    const { state } = this.context;
+    state.player?.destroy();
+    state.player = null;
+    state.godPlayer?.destroy();
+    state.godPlayer = null;
+    state.playController?.destroy();
+    state.playController = null;
+    this.context.shipSystem.clearDrivenState();
+    this.context.disableSpawnMode();
+    state.gameState = 'playing';
+    state.godModeActive = false;
+    this.context.hidePlayMenu();
+    this.context.hud.classList.remove('hidden');
 
-  const callbacks: PlayControllerCallbacks = {
-    getShipDeckHeight: (x, z) => {
-      let highestDeck: number | null = null;
-      for (const ship of context.spawnedShips) {
-        const deckY = context.getDeckHeightAt(ship, x, z);
-        if (deckY !== null && (highestDeck === null || deckY > highestDeck)) {
-          highestDeck = deckY;
-        }
+    const hudBars = document.getElementById('hud-bars');
+    if (hudBars) hudBars.style.display = 'flex';
+
+    this.context.initWorld(config, false);
+    const spawnPos = this.context.worldManager.getRandomSpawnPosition();
+
+    const callbacks: PlayControllerCallbacks = {
+      getShipDeckHeight: (x, z) => this.context.shipSystem.getHighestDeckHeightAt(x, z),
+      onHealthChange: (health) => this.context.updateHealthBar(health),
+      onStaminaChange: (stamina) => this.context.updateStaminaBar(stamina),
+      onWaterDeath: () => this.context.showNotification('You fell into the water! Respawning...'),
+      onEnterBoat: () => {
+        if (!state.playController) return;
+        this.context.shipSystem.enterBoat(state.playController, this.context.showNotification);
+      },
+      onExitBoat: () => {
+        if (!state.playController) return;
+        this.context.shipSystem.exitBoat(state.playController, this.context.showNotification);
+      },
+      onBoatInput: (thrust, steering) => {
+        this.context.shipSystem.applyDrivenInput(thrust, steering);
+      },
+    };
+
+    state.playController = new PlayModeController(
+      this.context.scene,
+      this.context.camera,
+      this.context.worldManager.generator,
+      spawnPos,
+      callbacks,
+    );
+    state.playController.sensitivity = this.context.getSensitivity();
+    this.context.updateHealthBar(100);
+    this.context.updateStaminaBar(100);
+    setTimeout(() => state.playController?.requestPointerLock(), 100);
+  }
+
+  startSandboxMode(): void {
+    const { state } = this.context;
+    state.playController?.destroy();
+    state.playController = null;
+    state.godPlayer?.destroy();
+    state.godPlayer = null;
+    this.context.shipSystem.clearDrivenState();
+    this.context.disableSpawnMode();
+    state.gameState = 'sandbox';
+    state.godModeActive = false;
+    this.context.hud.classList.remove('hidden');
+    this.context.initWorld({
+      islandCount: 1,
+      minIslandSize: 180,
+      maxIslandSize: 220,
+      noiseFrequency: 1.2,
+      noiseOctaves: 7,
+      worldSize: 600,
+      resolution: 200,
+      fogDensity: 0.003,
+    });
+    state.player = new PlayerController(this.context.scene, this.context.camera, 'god');
+    state.player.sensitivity = this.context.getSensitivity();
+    state.player.speed = this.context.getSpeed();
+    this.context.showSandboxPanel();
+    this.context.showSpawnPanel();
+  }
+
+  toggleGodMode(): void {
+    const { state } = this.context;
+    if (state.gameState !== 'playing') return;
+    state.godModeActive = !state.godModeActive;
+
+    if (state.godModeActive) {
+      state.playController?.releasePointerLock();
+      if (state.playController) {
+        this.context.shipSystem.clearDrivenState(state.playController);
       }
-      return highestDeck;
-    },
-    onHealthChange: (health) => context.updateHealthBar(health),
-    onStaminaChange: (stamina) => context.updateStaminaBar(stamina),
-    onWaterDeath: () => context.showNotification('You fell into the water! Respawning...'),
-    onEnterBoat: () => {
-      const playerPos = state.playController?.getCharacterPosition();
-      if (!playerPos) return;
-      for (const ship of context.spawnedShips) {
-        const deckY = context.getDeckHeightAt(ship, playerPos.x, playerPos.z);
-        if (deckY === null) continue;
-        state.drivenShip = ship;
-        state.deckOffset.x = 1.8;
-        state.deckOffset.z = 0;
-        const shipPos = ship.body.position;
-        const shipRot = ship.body.rotation.y;
-        const cos = Math.cos(shipRot);
-        const sin = Math.sin(shipRot);
-        const helmX = shipPos.x + state.deckOffset.x * cos - state.deckOffset.z * sin;
-        const helmZ = shipPos.z + state.deckOffset.x * sin + state.deckOffset.z * cos;
-        const helmY = context.getDeckHeightAt(ship, helmX, helmZ) ?? deckY;
-        state.playController?.setPosition(helmX, helmY, helmZ);
-        state.playController?.setDrivingBoat(true);
-        context.showNotification('Driving boat! WASD to steer, E to exit');
-        break;
+      const currentPos = state.playController
+        ? state.playController.getState().position
+        : { x: this.context.camera.position.x, y: this.context.camera.position.y, z: this.context.camera.position.z };
+      if (!state.godPlayer) {
+        state.godPlayer = new PlayerController(this.context.scene, this.context.camera, 'god');
+        state.godPlayer.sensitivity = this.context.getSensitivity();
+        state.godPlayer.speed = this.context.getSpeed();
       }
-    },
-    onExitBoat: () => {
-      if (state.drivenShip && state.playController) {
-        const shipPos = state.drivenShip.body.position;
-        const shipRot = state.drivenShip.body.rotation.y;
-        const cos = Math.cos(shipRot);
-        const sin = Math.sin(shipRot);
-        const exitX = shipPos.x + state.deckOffset.x * cos - state.deckOffset.z * sin + 2;
-        const exitZ = shipPos.z + state.deckOffset.x * sin + state.deckOffset.z * cos;
-        const exitY = context.getDeckHeightAt(state.drivenShip, exitX, exitZ) ?? shipPos.y + 2;
-        state.playController.setPosition(exitX, exitY, exitZ);
-        state.playController.setDrivingBoat(false);
-      }
-      state.drivenShip = null;
-      context.showNotification('Exited boat');
-    },
-    onBoatInput: (thrust, steering) => {
-      if (state.drivenShip) {
-        context.applyBoatInput(state.drivenShip.body, thrust, steering);
-      }
-    },
-  };
-
-  state.playController = new PlayModeController(context.scene, context.camera, context.worldManager.generator, spawnPos, callbacks);
-  state.playController.sensitivity = context.getSensitivity();
-  context.updateHealthBar(100);
-  context.updateStaminaBar(100);
-  setTimeout(() => state.playController?.requestPointerLock(), 100);
-}
-
-export function startSandboxMode(context: ModeManagerContext): void {
-  const { state } = context;
-  state.gameState = 'sandbox';
-  context.hud.classList.remove('hidden');
-  const singleIslandConfig: Partial<WorldConfig> = {
-    islandCount: 1,
-    minIslandSize: 180,
-    maxIslandSize: 220,
-    noiseFrequency: 1.2,
-    noiseOctaves: 7,
-    worldSize: 600,
-    resolution: 200,
-    fogDensity: 0.003,
-  };
-  context.initWorld(singleIslandConfig);
-  state.player = new PlayerController(context.scene, context.camera, 'god');
-  state.player.sensitivity = context.getSensitivity();
-  state.player.speed = context.getSpeed();
-  context.showSandboxPanel();
-  context.showSpawnPanel();
-}
-
-export function toggleGodMode(context: ModeManagerContext): void {
-  const { state } = context;
-  if (state.gameState !== 'playing') return;
-  state.godModeActive = !state.godModeActive;
-
-  if (state.godModeActive) {
-    state.playController?.releasePointerLock();
-    const currentPos = state.playController
-      ? state.playController.getState().position
-      : { x: context.camera.position.x, y: context.camera.position.y, z: context.camera.position.z };
-    if (!state.godPlayer) {
-      state.godPlayer = new PlayerController(context.scene, context.camera, 'god');
-      state.godPlayer.sensitivity = context.getSensitivity();
-      state.godPlayer.speed = context.getSpeed();
+      this.context.camera.position.set(currentPos.x, currentPos.y + 15, currentPos.z + 10);
+      state.godPlayer.requestPointerLock();
+      this.context.showSpawnPanel();
+      this.context.showNotification('God Mode ON - Press Y to exit');
+    } else {
+      state.godPlayer?.releasePointerLock();
+      this.context.hideSpawnPanel();
+      this.context.disableSpawnMode();
+      state.playController?.requestPointerLock();
+      this.context.showNotification('God Mode OFF');
     }
-    context.camera.position.set(currentPos.x, currentPos.y + 15, currentPos.z + 10);
-    state.godPlayer.requestPointerLock();
-    context.showSpawnPanel();
-    context.showNotification('God Mode ON - Press Y to exit');
-  } else {
-    state.godPlayer?.releasePointerLock();
-    context.hideSpawnPanel();
-    context.disableSpawnMode();
-    state.playController?.requestPointerLock();
-    context.showNotification('God Mode OFF');
   }
 }

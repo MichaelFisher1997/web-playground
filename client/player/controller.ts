@@ -27,6 +27,10 @@ export class PlayerController {
   private _keys: Record<string, boolean> = {};
   private _pointerLocked: boolean = false;
   private _rightMouseDown: boolean = false;
+  private _onKeyDown: ((e: KeyboardEvent) => void) | null = null;
+  private _onKeyUp: ((e: KeyboardEvent) => void) | null = null;
+  private _onPointerLockChange: (() => void) | null = null;
+  private _onMouseMove: ((e: MouseEvent) => void) | null = null;
 
   constructor(scene: THREE.Scene, camera: THREE.PerspectiveCamera, mode: ControlMode = 'normal') {
     this.scene = scene;
@@ -50,7 +54,7 @@ export class PlayerController {
   private _mouseLookEnabled: boolean = false;
 
   private _bindInputs(): void {
-    window.addEventListener('keydown', (e) => {
+    this._onKeyDown = (e: KeyboardEvent) => {
       this._keys[e.code] = true;
       if (e.code === 'Space') e.preventDefault();
       
@@ -67,13 +71,15 @@ export class PlayerController {
           document.exitPointerLock();
         }
       }
-    });
+    };
+    window.addEventListener('keydown', this._onKeyDown);
     
-    window.addEventListener('keyup', (e) => {
+    this._onKeyUp = (e: KeyboardEvent) => {
       this._keys[e.code] = false;
-    });
+    };
+    window.addEventListener('keyup', this._onKeyUp);
 
-    document.addEventListener('pointerlockchange', () => {
+    this._onPointerLockChange = () => {
       this._pointerLocked = document.pointerLockElement === document.body;
       if (this.mode === 'normal') {
         document.getElementById('crosshair')?.classList.toggle('active', this._pointerLocked);
@@ -81,9 +87,10 @@ export class PlayerController {
         // In god mode, crosshair reflects mouse look state
         document.getElementById('crosshair')?.classList.toggle('active', this._mouseLookEnabled && this._pointerLocked);
       }
-    });
+    };
+    document.addEventListener('pointerlockchange', this._onPointerLockChange);
 
-    document.addEventListener('mousemove', (e) => {
+    this._onMouseMove = (e: MouseEvent) => {
       let dx = 0;
       let dy = 0;
 
@@ -103,7 +110,8 @@ export class PlayerController {
         -Math.PI / 2 + 0.01,
         Math.min(Math.PI / 2 - 0.01, this.pitch - dy * sens)
       );
-    });
+    };
+    document.addEventListener('mousemove', this._onMouseMove);
   }
 
   get rotation(): number { return this.yaw; }
@@ -165,5 +173,14 @@ export class PlayerController {
     this.camera.position.set(x, y, z);
   }
 
-  destroy(): void {}
+  destroy(): void {
+    if (this._onKeyDown) window.removeEventListener('keydown', this._onKeyDown);
+    if (this._onKeyUp) window.removeEventListener('keyup', this._onKeyUp);
+    if (this._onPointerLockChange) document.removeEventListener('pointerlockchange', this._onPointerLockChange);
+    if (this._onMouseMove) document.removeEventListener('mousemove', this._onMouseMove);
+    this._onKeyDown = null;
+    this._onKeyUp = null;
+    this._onPointerLockChange = null;
+    this._onMouseMove = null;
+  }
 }
